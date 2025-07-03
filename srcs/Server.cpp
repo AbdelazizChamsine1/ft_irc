@@ -1,24 +1,21 @@
 #include "Server.hpp"
 #include <iostream>
 
-Client* Server::getClient(int fd) {
-    if (_clients.find(fd) != _clients.end())
-        return _clients[fd];
-    return NULL;
+// Constructor/Destructor
+Server::Server() {}
+
+Server::~Server() {
+    for (std::map<int, Client*>::iterator it = _clients.begin(); it != _clients.end(); ++it)
+        delete it->second;
+    for (std::map<std::string, Channel*>::iterator it = _channels.begin(); it != _channels.end(); ++it)
+        delete it->second;
 }
 
-Client* Server::findClientByNick(const std::string& nickname) {
-    for (std::map<int, Client*>::iterator it = _clients.begin(); it != _clients.end(); ++it) {
-        if (it->second->getNickname() == nickname)
-            return it->second;
-    }
-    return NULL;
-}
+// -------- CLIENT METHODS --------
 
 void Server::addClient(int fd) {
-    if (_clients.find(fd) == _clients.end()) {
+    if (_clients.find(fd) == _clients.end())
         _clients[fd] = new Client(fd);
-    }
 }
 
 void Server::removeClient(int fd) {
@@ -30,10 +27,28 @@ void Server::removeClient(int fd) {
     }
 }
 
-Channel* Server::getChannel(const std::string& name) {
-    if (_channels.find(name) != _channels.end())
-        return _channels[name];
+Client* Server::getClient(int fd) {
+    std::map<int, Client*>::iterator it = _clients.find(fd);
+    return (it != _clients.end()) ? it->second : NULL;
+}
+
+Client* Server::findClientByNick(const std::string& nickname) {
+    for (std::map<int, Client*>::iterator it = _clients.begin(); it != _clients.end(); ++it) {
+        if (it->second->getNickname() == nickname)
+            return it->second;
+    }
     return NULL;
+}
+
+bool Server::isNicknameInUse(const std::string& nickname) {
+    return findClientByNick(nickname) != NULL;
+}
+
+// -------- CHANNEL METHODS --------
+
+Channel* Server::getChannel(const std::string& name) {
+    std::map<std::string, Channel*>::iterator it = _channels.find(name);
+    return (it != _channels.end()) ? it->second : NULL;
 }
 
 Channel* Server::createChannel(const std::string& name) {
@@ -43,16 +58,43 @@ Channel* Server::createChannel(const std::string& name) {
 }
 
 void Server::removeClientFromAllChannels(Client* client) {
+    std::vector<Channel*> channelsToCheck;
+    
+    // First, collect all channels that have this client
     for (std::map<std::string, Channel*>::iterator it = _channels.begin(); it != _channels.end(); ++it) {
         if (it->second->hasClient(client)) {
-            it->second->removeClient(client);
+            channelsToCheck.push_back(it->second);
         }
+    }
+    
+    // Then remove the client from each channel and check if empty
+    for (std::vector<Channel*>::iterator it = channelsToCheck.begin(); it != channelsToCheck.end(); ++it) {
+        (*it)->removeClient(client);
+        deleteChannelIfEmpty(*it);
     }
 }
 
+void Server::deleteChannelIfEmpty(Channel* channel) {
+    if (!channel)
+        return;
+
+    // Check if it's in the map
+    std::map<std::string, Channel*>::iterator it = _channels.find(channel->getName());
+    if (it == _channels.end())
+        return;
+
+    // If no members, delete and erase
+    if (channel->getMembers().empty()) {
+        delete channel;
+        _channels.erase(it);
+    }
+}
+
+
+// -------- MESSAGING --------
+
 void Server::queueMessage(int clientFd, const std::string& message) {
     Client* client = getClient(clientFd);
-    if (client) {
+    if (client)
         client->getOutputBuffer() += message + "\r\n";
-    }
 }

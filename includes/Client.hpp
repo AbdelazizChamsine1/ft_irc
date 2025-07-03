@@ -10,7 +10,11 @@ private:
     std::string _username;
     std::string _realname;
     std::string _hostname;
+    bool _receivedPass;
+    bool _receivedNick;
+    bool _receivedUser;
     bool _registered;
+
     std::string _inputBuffer;
     std::string _outputBuffer;
 
@@ -22,14 +26,22 @@ public:
     int getFd() const;
     const std::string& getNickname() const;
     const std::string& getUsername() const;
+    const std::string& getRealname() const;
+    const std::string& getHostname() const;
+    std::string getHostmask() const;
     bool isRegistered() const;
 
     // Setters
     void setNickname(const std::string& nick);
     void setUsername(const std::string& user);
-    void setRegistered(bool status);
+    void setRealname(const std::string& realname);
+    void setHostname(const std::string& hostname);
+    void setReceivedPass(bool);
+    void setReceivedNick(bool);
+    void setReceivedUser(bool);
+    void tryRegister();
 
-    // Buffer handling
+    // Buffers
     void appendToInputBuffer(const std::string& data);
     std::string& getInputBuffer();
     std::string& getOutputBuffer();

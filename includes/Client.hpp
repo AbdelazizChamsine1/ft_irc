@@ -2,6 +2,8 @@
 #define CLIENT_HPP
 
 #include <string>
+#include <deque>
+#include <ctime>
 
 class Client {
 private:
@@ -17,6 +19,8 @@ private:
 
     std::string _inputBuffer;
     std::string _outputBuffer;
+    std::deque<std::string> _outBufQ;  // Message queue for better I/O handling
+    time_t _lastActive;                // For timeout tracking
 
 public:
     Client(int fd);
@@ -30,6 +34,7 @@ public:
     const std::string& getHostname() const;
     std::string getHostmask() const;
     bool isRegistered() const;
+    time_t getLastActive() const;
 
     // Setters
     void setNickname(const std::string& nick);
@@ -40,11 +45,21 @@ public:
     void setReceivedNick(bool);
     void setReceivedUser(bool);
     void tryRegister();
+    void updateLastActive();
 
     // Buffers
     void appendToInputBuffer(const std::string& data);
     std::string& getInputBuffer();
     std::string& getOutputBuffer();
+
+    // Message queue handling
+    void enqueueMessage(const std::string& message);
+    bool hasMessagesToSend() const;
+    void flushMessagesToOutputBuffer();
+
+    // Line extraction for IRC command parsing
+    std::string extractNextLine();
+    bool hasCompleteLine() const;
 };
 
 #endif

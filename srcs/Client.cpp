@@ -1,11 +1,13 @@
 #include "Client.hpp"
+#include <ctime>
 
 Client::Client(int fd)
     : _fd(fd),
       _receivedPass(false),
       _receivedNick(false),
       _receivedUser(false),
-      _registered(false) {}
+      _registered(false),
+      _lastActive(time(NULL)) {}
 
 Client::~Client() {}
 
@@ -25,6 +27,8 @@ std::string Client::getHostmask() const {
 }
 
 bool Client::isRegistered() const { return _registered; }
+
+time_t Client::getLastActive() const { return _lastActive; }
 
 // Setters
 void Client::setNickname(const std::string& nick) {
@@ -62,6 +66,10 @@ void Client::setReceivedUser(bool received) {
     tryRegister();
 }
 
+void Client::updateLastActive() {
+    _lastActive = time(NULL);
+}
+
 // Auto-register when all fields are filled
 void Client::tryRegister() {
     if (_receivedPass && _receivedNick && _receivedUser && !_registered) {
@@ -72,6 +80,7 @@ void Client::tryRegister() {
 // Buffer handling
 void Client::appendToInputBuffer(const std::string& data) {
     _inputBuffer += data;
+    updateLastActive();
 }
 
 std::string& Client::getInputBuffer() {
@@ -80,4 +89,36 @@ std::string& Client::getInputBuffer() {
 
 std::string& Client::getOutputBuffer() {
     return _outputBuffer;
+}
+
+// Message queue handling
+void Client::enqueueMessage(const std::string& message) {
+    _outBufQ.push_back(message);
+}
+
+bool Client::hasMessagesToSend() const {
+    return !_outBufQ.empty() || !_outputBuffer.empty();
+}
+
+void Client::flushMessagesToOutputBuffer() {
+    while (!_outBufQ.empty() && _outputBuffer.empty()) {
+        _outputBuffer = _outBufQ.front() + "\r\n";
+        _outBufQ.pop_front();
+    }
+}
+
+// Line extraction for IRC command parsing
+std::string Client::extractNextLine() {
+    size_t pos = _inputBuffer.find("\r\n");
+    if (pos == std::string::npos) {
+        return "";
+    }
+
+    std::string line = _inputBuffer.substr(0, pos);
+    _inputBuffer.erase(0, pos + 2);
+    return line;
+}
+
+bool Client::hasCompleteLine() const {
+    return _inputBuffer.find("\r\n") != std::string::npos;
 }

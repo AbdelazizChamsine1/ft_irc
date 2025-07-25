@@ -4,6 +4,8 @@
 // Constructor/Destructor
 Server::Server() {}
 
+Server::Server(const std::string& password) : _password(password) {}
+
 Server::~Server() {
     for (std::map<int, Client*>::iterator it = _clients.begin(); it != _clients.end(); ++it)
         delete it->second;
@@ -97,4 +99,24 @@ void Server::queueMessage(int clientFd, const std::string& message) {
     Client* client = getClient(clientFd);
     if (client)
         client->getOutputBuffer() += message + "\r\n";
+}
+
+// -------- PASSWORD MANAGEMENT --------
+
+const std::string& Server::getPassword() const {
+    return _password;
+}
+
+// -------- CHANNEL UTILITIES --------
+
+std::vector<Channel*> Server::getClientChannels(Client* client) {
+    std::vector<Channel*> clientChannels;
+    
+    for (std::map<std::string, Channel*>::iterator it = _channels.begin(); it != _channels.end(); ++it) {
+        if (it->second->hasClient(client)) {
+            clientChannels.push_back(it->second);
+        }
+    }
+    
+    return clientChannels;
 }

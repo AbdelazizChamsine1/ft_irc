@@ -11,9 +11,11 @@ class Server {
 private:
     std::map<int, Client*> _clients;                     // socket fd → Client
     std::map<std::string, Channel*> _channels;           // channel name → Channel
+    std::string _password;                               // server password
 
 public:
     Server();
+    Server(const std::string& password);
     ~Server();
 
     // Client management
@@ -31,6 +33,12 @@ public:
 
     // Messaging
     void queueMessage(int clientFd, const std::string& message);
+    
+    // Password management
+    const std::string& getPassword() const;
+    
+    // Channel utilities
+    std::vector<Channel*> getClientChannels(Client* client);
 };
 
 #endif

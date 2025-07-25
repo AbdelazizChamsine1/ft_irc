@@ -4,7 +4,8 @@
 #include <string>
 #include <set>
 #include <map>
-#include "Client.hpp"
+
+class Client; // Forward declaration
 
 class Channel {
 private:
@@ -12,6 +13,15 @@ private:
     std::string _topic;
     std::set<Client*> _members;
     std::set<Client*> _operators;
+    
+    // Channel modes
+    bool _inviteOnly;      // +i mode
+    bool _topicRestricted; // +t mode
+    std::string _key;      // +k mode (password)
+    size_t _userLimit;     // +l mode (0 = no limit)
+    
+    // Invite list (simple session-based)
+    std::set<Client*> _invitedClients;
 
 public:
     Channel(const std::string& name);
@@ -36,6 +46,24 @@ public:
 
     // Messaging
     void broadcast(const std::string& message, Client* sender);
+    
+    // Modes
+    bool isInviteOnly() const;
+    bool isTopicRestricted() const;
+    const std::string& getKey() const;
+    size_t getUserLimit() const;
+    
+    void setInviteOnly(bool inviteOnly);
+    void setTopicRestricted(bool topicRestricted);
+    void setKey(const std::string& key);
+    void setUserLimit(size_t limit);
+    
+    std::string getModeString() const;
+    
+    // Invite management
+    void addInvite(Client* client);
+    void removeInvite(Client* client);
+    bool isInvited(Client* client) const;
 };
 
 #endif

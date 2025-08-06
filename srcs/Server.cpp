@@ -1,5 +1,6 @@
 #include "Server.hpp"
 #include <iostream>
+#include <ctime>
 
 // Constructor/Destructor
 Server::Server() {}
@@ -11,6 +12,15 @@ Server::~Server() {
         delete it->second;
     for (std::map<std::string, Channel*>::iterator it = _channels.begin(); it != _channels.end(); ++it)
         delete it->second;
+}
+
+// Configuration
+void Server::setPassword(const std::string& password) {
+    _password = password;
+}
+
+const std::string& Server::getPassword() const {
+    return _password;
 }
 
 // -------- CLIENT METHODS --------
@@ -61,14 +71,14 @@ Channel* Server::createChannel(const std::string& name) {
 
 void Server::removeClientFromAllChannels(Client* client) {
     std::vector<Channel*> channelsToCheck;
-    
+
     // First, collect all channels that have this client
     for (std::map<std::string, Channel*>::iterator it = _channels.begin(); it != _channels.end(); ++it) {
         if (it->second->hasClient(client)) {
             channelsToCheck.push_back(it->second);
         }
     }
-    
+
     // Then remove the client from each channel and check if empty
     for (std::vector<Channel*>::iterator it = channelsToCheck.begin(); it != channelsToCheck.end(); ++it) {
         (*it)->removeClient(client);
@@ -92,13 +102,54 @@ void Server::deleteChannelIfEmpty(Channel* channel) {
     }
 }
 
-
 // -------- MESSAGING --------
 
 void Server::queueMessage(int clientFd, const std::string& message) {
     Client* client = getClient(clientFd);
     if (client)
-        client->getOutputBuffer() += message + "\r\n";
+        client->enqueueMessage(message);
+}
+
+void Server::sendMessage(int clientFd, const std::string& message) {
+    queueMessage(clientFd, message);
+}
+
+void Server::broadcast(const std::set<int>& targets, const std::string& message) {
+    for (std::set<int>::const_iterator it = targets.begin(); it != targets.end(); ++it) {
+        queueMessage(*it, message);
+    }
+}
+
+// -------- I/O INTERFACE METHODS --------
+
+void Server::flushClientMessages(int clientFd) {
+    Client* client = getClient(clientFd);
+    if (client) {
+        client->flushMessagesToOutputBuffer();
+    }
+}
+
+bool Server::hasClientMessagesToSend(int clientFd) const {
+    Client* client = const_cast<Server*>(this)->getClient(clientFd);
+    return client ? client->hasMessagesToSend() : false;
+}
+
+// -------- TIMEOUT HANDLING --------
+
+void Server::disconnectIdleClients(int timeoutSeconds) {
+    std::vector<int> clientsToDisconnect;
+    time_t currentTime = time(NULL);
+
+    for (std::map<int, Client*>::iterator it = _clients.begin(); it != _clients.end(); ++it) {
+        if (currentTime - it->second->getLastActive() > timeoutSeconds) {
+            clientsToDisconnect.push_back(it->first);
+        }
+    }
+
+    for (std::vector<int>::iterator it = clientsToDisconnect.begin(); it != clientsToDisconnect.end(); ++it) {
+        std::cout << "Disconnecting idle client: fd=" << *it << std::endl;
+        removeClient(*it);
+    }
 }
 
 // -------- PASSWORD MANAGEMENT --------

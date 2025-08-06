@@ -1,8 +1,7 @@
 #include "CommandHandlers.hpp"
 #include "Server.hpp"
 #include "Channel.hpp"
-#include <iostream>
-#include <cstdlib>
+
 
 CommandHandlers::CommandHandlers(Server* server) : _server(server) {}
 

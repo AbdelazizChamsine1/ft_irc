@@ -53,6 +53,7 @@ std::vector<std::string> Command::extractCompleteCommands(std::string& buffer) {
     return commands;
 }
 
+//unused search why we put it if we don't use it (hicham)
 bool Command::isCommandComplete(const std::string& buffer) {
     return buffer.find("\r\n") != std::string::npos;
 }

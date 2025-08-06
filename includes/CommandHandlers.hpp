@@ -6,6 +6,8 @@
 #include "Client.hpp"
 #include "Server.hpp"
 #include "IRCProtocol.hpp"
+#include <iostream>
+#include <cstdlib>
 
 class Server; // Forward declaration
 class Client; // Forward declaration

@@ -164,8 +164,23 @@ void handleClientRead(int clientFd, Server& server, Command& commandProcessor) {
             std::cout << "Client " << clientFd << " (" << getClientDisplayName(client) 
                       << ") disconnected" << std::endl;
         } else if (errno != EAGAIN && errno != EWOULDBLOCK) {
-            perror("recv");
+            std::cout << "Client " << clientFd << " (" << getClientDisplayName(client) 
+                      << ") connection error: " << strerror(errno) << std::endl;
         }
+        
+        // Handle disconnection - send QUIT to channels
+        if (client->isRegistered()) {
+            std::vector<Channel*> clientChannels = server.getClientChannels(client);
+            std::string quitMsg = ":" + client->getHostmask() + " QUIT :Client disconnected\r\n";
+            
+            for (std::vector<Channel*>::iterator it = clientChannels.begin(); 
+                 it != clientChannels.end(); ++it) {
+                (*it)->broadcast(quitMsg, client);
+            }
+        }
+        
+        // Remove client from server (this will clean up channels too)
+        server.removeClient(clientFd);
         return;
     }
 
@@ -376,7 +391,21 @@ int main(int argc, char* argv[]) {
                 Client* client = server.getClient(clientFd);
                 std::cout << "Client " << clientFd << " (" << getClientDisplayName(client) 
                           << ") error/hangup" << std::endl;
-                handleClientDisconnection(clientFd, server, pollFds);
+                
+                // Handle disconnection - send QUIT to channels
+                if (client && client->isRegistered()) {
+                    std::vector<Channel*> clientChannels = server.getClientChannels(client);
+                    std::string quitMsg = ":" + client->getHostmask() + " QUIT :Client disconnected\r\n";
+                    
+                    for (std::vector<Channel*>::iterator it = clientChannels.begin(); 
+                         it != clientChannels.end(); ++it) {
+                        (*it)->broadcast(quitMsg, client);
+                    }
+                }
+                
+                close(clientFd);
+                server.removeClient(clientFd);
+                removeClientFromPoll(clientFd, pollFds);
                 continue; // Don't increment i
             }
 
@@ -387,6 +416,8 @@ int main(int argc, char* argv[]) {
                 // Check if client disconnected during command processing
                 Client* client = server.getClient(clientFd);
                 if (!client) {
+                    std::cout << "Client " << clientFd << " disconnected during processing" << std::endl;
+                    close(clientFd);
                     removeClientFromPoll(clientFd, pollFds);
                     continue; // Don't increment i
                 }

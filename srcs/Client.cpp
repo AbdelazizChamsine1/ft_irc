@@ -107,18 +107,47 @@ void Client::flushMessagesToOutputBuffer() {
     }
 }
 
-// Line extraction for IRC command parsing
+// // Line extraction for IRC command parsing
+// std::string Client::extractNextLine() {
+//     size_t pos = _inputBuffer.find("\r\n");
+//     if (pos == std::string::npos) {
+//         return "";
+//     }
+
+//     std::string line = _inputBuffer.substr(0, pos);
+//     _inputBuffer.erase(0, pos + 2);
+//     return line;
+// }
+
 std::string Client::extractNextLine() {
     size_t pos = _inputBuffer.find("\r\n");
+    size_t lineEnd = 2; // Length of "\r\n"
+    
+    if (pos == std::string::npos) {
+        pos = _inputBuffer.find("\n");
+        lineEnd = 1; // Length of "\n"
+    }
+    
     if (pos == std::string::npos) {
         return "";
     }
 
     std::string line = _inputBuffer.substr(0, pos);
-    _inputBuffer.erase(0, pos + 2);
+    _inputBuffer.erase(0, pos + lineEnd);
+    
+    // Remove trailing \r if it exists (for mixed line endings)
+    if (!line.empty() && line[line.length() - 1] == '\r') {
+        line.erase(line.length() - 1);
+    }
+    
     return line;
 }
 
+// bool Client::hasCompleteLine() const {
+//     return _inputBuffer.find("\r\n") != std::string::npos;
+// }
+
 bool Client::hasCompleteLine() const {
-    return _inputBuffer.find("\r\n") != std::string::npos;
+    return _inputBuffer.find("\r\n") != std::string::npos || 
+           _inputBuffer.find("\n") != std::string::npos;
 }

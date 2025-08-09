@@ -4,6 +4,7 @@
 #include <csignal>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <arpa/inet.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <poll.h>
@@ -12,11 +13,13 @@
 #include <cerrno>
 #include <ctime>
 #include "Server.hpp"
+#include "Command.hpp"
 #include "utils.hpp"
 
 // Global variables for signal handling
 volatile sig_atomic_t g_shutdown = 0;
 Server* g_server = NULL;
+Command* g_commandProcessor = NULL;
 
 void signalHandler(int signal) {
     if (signal == SIGINT) {
@@ -79,7 +82,7 @@ int createListeningSocket(int port) {
         return -1;
     }
 
-    std::cout << "Server listening on port " << port << std::endl;
+    std::cout << "Server is listening on port " << port << std::endl;
     return serverFd;
 }
 
@@ -110,6 +113,12 @@ void handleNewConnection(int serverFd, Server& server, std::vector<pollfd>& poll
 
         // Add client to server
         server.addClient(clientFd);
+        
+        // Set hostname for the client
+        Client* client = server.getClient(clientFd);
+        if (client) {
+            client->setHostname("localhost");
+        }
 
         // Add to poll vector
         pollfd clientPollFd;
@@ -118,11 +127,30 @@ void handleNewConnection(int serverFd, Server& server, std::vector<pollfd>& poll
         clientPollFd.revents = 0;
         pollFds.push_back(clientPollFd);
 
-        std::cout << "New client connected: fd=" << clientFd << std::endl;
+        // Get client IP address
+        char clientIP[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &clientAddr.sin_addr, clientIP, INET_ADDRSTRLEN);
+        
+        std::cout << "New client connected: " << clientFd << " (IP: " << clientIP << ")" << std::endl;
     }
 }
 
-void handleClientRead(int clientFd, Server& server) {
+std::string getClientDisplayName(Client* client) {
+    if (client->getNickname().empty()) {
+        return "(unknown)";
+    }
+    return client->getNickname();
+}
+
+void logCommand(int clientFd, const std::string& command, Server& server) {
+    Client* client = server.getClient(clientFd);
+    if (client) {
+        std::cout << "Parsing command from client " << clientFd << " (" 
+                  << getClientDisplayName(client) << "): " << command << std::endl;
+    }
+}
+
+void handleClientRead(int clientFd, Server& server, Command& commandProcessor) {
     Client* client = server.getClient(clientFd);
     if (!client) {
         return;
@@ -133,25 +161,55 @@ void handleClientRead(int clientFd, Server& server) {
 
     if (bytesRead <= 0) {
         if (bytesRead == 0) {
-            std::cout << "Client disconnected: fd=" << clientFd << std::endl;
+            std::cout << "Client " << clientFd << " (" << getClientDisplayName(client) 
+                      << ") disconnected" << std::endl;
         } else if (errno != EAGAIN && errno != EWOULDBLOCK) {
             perror("recv");
         }
-        // Client disconnected or error - will be handled in main loop
         return;
     }
 
     buffer[bytesRead] = '\0';
-    client->appendToInputBuffer(std::string(buffer, bytesRead));
-
-    // Process complete IRC lines
-    while (client->hasCompleteLine()) {
-        std::string line = client->extractNextLine();
-        if (!line.empty()) {
-            // TODO: For Protocol & Command Specialist - call command handler here
-            // Example: processIRCCommand(clientFd, line, server);
-            std::cout << "Received IRC line from fd=" << clientFd << ": " << line << std::endl;
+    
+    // Convert \n to \r\n for IRC compatibility
+    std::string data(buffer, bytesRead);
+    std::string ircData = "";
+    for (size_t i = 0; i < data.length(); i++) {
+        if (data[i] == '\n' && (i == 0 || data[i-1] != '\r')) {
+            ircData += "\r\n";
+        } else if (data[i] != '\r' || (i + 1 < data.length() && data[i+1] != '\n')) {
+            ircData += data[i];
         }
+    }
+    
+    client->appendToInputBuffer(ircData);
+
+    // Store registration state before processing
+    bool wasRegistered = client->isRegistered();
+    
+    // Process commands and log them
+    std::string& inputBuffer = client->getInputBuffer();
+    size_t startPos = 0;
+    
+    // Extract and log commands before processing
+    std::string tempBuffer = inputBuffer;
+    while (true) {
+        size_t pos = tempBuffer.find("\r\n", startPos);
+        if (pos == std::string::npos) break;
+        
+        std::string command = tempBuffer.substr(startPos, pos - startPos);
+        if (!command.empty()) {
+            logCommand(clientFd, command, server);
+        }
+        startPos = pos + 2;
+    }
+    
+    // Process all commands
+    commandProcessor.processClientBuffer(client);
+    
+    // Check if client became registered
+    if (!wasRegistered && client->isRegistered()) {
+        std::cout << "Welcome sent to " << client->getNickname() << std::endl;
     }
 }
 
@@ -204,6 +262,24 @@ void updatePollEvents(std::vector<pollfd>& pollFds, Server& server) {
     }
 }
 
+void handleClientDisconnection(int clientFd, Server& server, std::vector<pollfd>& pollFds) {
+    Client* client = server.getClient(clientFd);
+    if (client && client->isRegistered()) {
+        // Send QUIT to all channels the client is in
+        std::vector<Channel*> clientChannels = server.getClientChannels(client);
+        std::string quitMsg = ":" + client->getHostmask() + " QUIT :Client disconnected\r\n";
+        
+        for (std::vector<Channel*>::iterator it = clientChannels.begin(); 
+             it != clientChannels.end(); ++it) {
+            (*it)->broadcast(quitMsg, client);
+        }
+    }
+    
+    close(clientFd);
+    server.removeClient(clientFd);
+    removeClientFromPoll(clientFd, pollFds);
+}
+
 int main(int argc, char* argv[]) {
     if (argc != 3) {
         std::cerr << "Usage: " << argv[0] << " <port> <password>" << std::endl;
@@ -222,6 +298,9 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // Print password as first line
+    std::cout << password << std::endl;
+
     // Setup signal handling
     setupSignalHandling();
 
@@ -236,6 +315,10 @@ int main(int argc, char* argv[]) {
     server.setPassword(password);
     g_server = &server;
 
+    // Create command processor
+    Command commandProcessor(&server);
+    g_commandProcessor = &commandProcessor;
+
     // Setup poll vector
     std::vector<pollfd> pollFds;
     pollfd serverPollFd;
@@ -243,8 +326,6 @@ int main(int argc, char* argv[]) {
     serverPollFd.events = POLLIN;
     serverPollFd.revents = 0;
     pollFds.push_back(serverPollFd);
-
-    std::cout << "IRC Server started. Entering main loop..." << std::endl;
 
     // Variables for timeout handling
     time_t lastTimeoutCheck = time(NULL);
@@ -292,22 +373,20 @@ int main(int argc, char* argv[]) {
 
             // Check for errors or hangup
             if (revents & (POLLERR | POLLHUP)) {
-                std::cout << "Client error/hangup: fd=" << clientFd << std::endl;
-                close(clientFd);
-                server.removeClient(clientFd);
-                removeClientFromPoll(clientFd, pollFds);
+                Client* client = server.getClient(clientFd);
+                std::cout << "Client " << clientFd << " (" << getClientDisplayName(client) 
+                          << ") error/hangup" << std::endl;
+                handleClientDisconnection(clientFd, server, pollFds);
                 continue; // Don't increment i
             }
 
             // Handle read
             if (revents & POLLIN) {
-                handleClientRead(clientFd, server);
+                handleClientRead(clientFd, server, commandProcessor);
 
-                // Check if client disconnected
+                // Check if client disconnected during command processing
                 Client* client = server.getClient(clientFd);
                 if (!client) {
-                    close(clientFd);
-                    server.removeClient(clientFd);
                     removeClientFromPoll(clientFd, pollFds);
                     continue; // Don't increment i
                 }
@@ -326,9 +405,16 @@ int main(int argc, char* argv[]) {
     std::cout << "Shutting down server..." << std::endl;
     close(serverFd);
 
-    // Close all client connections
+    // Close all client connections gracefully
     for (size_t i = 1; i < pollFds.size(); ++i) {
-        close(pollFds[i].fd);
+        int clientFd = pollFds[i].fd;
+        Client* client = server.getClient(clientFd);
+        if (client && client->isRegistered()) {
+            // Send a final message to registered clients
+            std::string shutdownMsg = ":localhost ERROR :Server shutting down\r\n";
+            send(clientFd, shutdownMsg.c_str(), shutdownMsg.length(), 0);
+        }
+        close(clientFd);
     }
 
     std::cout << "Server shutdown complete." << std::endl;

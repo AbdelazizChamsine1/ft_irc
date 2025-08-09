@@ -23,9 +23,15 @@ std::string formatIRCMessage(const std::string& prefix, const std::string& comma
     return oss.str();
 }
 
+// std::string formatNumericReply(const std::string& code, const std::string& target, 
+//                               const std::string& message) {
+//     std::ostringstream oss;
+//     oss << ":" << "localhost" << " " << code << " " << target << " :" << message << "\r\n";
+//     return oss.str();
+// }
 std::string formatNumericReply(const std::string& code, const std::string& target, 
                               const std::string& message) {
     std::ostringstream oss;
-    oss << ":" << "localhost" << " " << code << " " << target << " :" << message << "\r\n";
+    oss << ":" << "ircserv" << " " << code << " " << target << " :" << message << "\r\n";
     return oss.str();
 }

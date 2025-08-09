@@ -27,6 +27,7 @@ void CommandHandlers::handlePass(Client* client, const std::vector<std::string>&
     
     client->setReceivedPass(true);
     client->tryRegister();
+    std::cout << "PASS accepted from client " << client->getFd() << std::endl;
 }
 
 void CommandHandlers::handleNick(Client* client, const std::vector<std::string>& params) {
@@ -50,6 +51,7 @@ void CommandHandlers::handleNick(Client* client, const std::vector<std::string>&
     client->setNickname(nickname);
     client->setReceivedNick(true);
     client->tryRegister();
+    std::cout << "Client " << client->getFd() << " set nickname to " << nickname << std::endl;
 }
 
 void CommandHandlers::handleUser(Client* client, const std::vector<std::string>& params) {
@@ -59,6 +61,7 @@ void CommandHandlers::handleUser(Client* client, const std::vector<std::string>&
     }
     
     client->setUsername(params[0]);
+    std::cout << "Client " << client->getFd() << " registered with username: " << params[0] << std::endl;
     client->setRealname(params[3]);
     client->setReceivedUser(true);
     client->tryRegister();

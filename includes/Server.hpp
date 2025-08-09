@@ -38,10 +38,7 @@ public:
 
     // Messaging - Enhanced for I/O layer
     void queueMessage(int clientFd, const std::string& message);
-    
-    // Password management
-    const std::string& getPassword() const;
-    
+        
     // Channel utilities
     std::vector<Channel*> getClientChannels(Client* client);
     void sendMessage(int clientFd, const std::string& message);

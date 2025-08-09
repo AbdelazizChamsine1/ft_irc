@@ -152,12 +152,6 @@ void Server::disconnectIdleClients(int timeoutSeconds) {
     }
 }
 
-// -------- PASSWORD MANAGEMENT --------
-
-const std::string& Server::getPassword() const {
-    return _password;
-}
-
 // -------- CHANNEL UTILITIES --------
 
 std::vector<Channel*> Server::getClientChannels(Client* client) {

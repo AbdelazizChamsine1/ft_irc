@@ -2,6 +2,8 @@
 #include <iostream>
 #include <sstream>
 #include <algorithm>
+#include "CommandHandlers.hpp"
+
 
 Command::Command(Server* server) : _server(server) {
     _handlers = new CommandHandlers(server);
@@ -63,8 +65,8 @@ IRCCommand Command::parseRawCommand(const std::string& rawCommand) {
     std::string line = rawCommand;
     
     // Remove trailing whitespace
-    while (!line.empty() && (line.back() == ' ' || line.back() == '\t')) {
-        line.pop_back();
+    while (!line.empty() && (line[line.size() - 1] == ' ' || line[line.size() - 1] == '\t')) {
+    line.erase(line.size() - 1);
     }
     
     // Handle empty commands

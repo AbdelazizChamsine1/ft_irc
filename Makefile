@@ -12,6 +12,8 @@ SOURCES = main.cpp \
           $(SRCDIR)/Client.cpp \
           $(SRCDIR)/Channel.cpp \
           $(SRCDIR)/Command.cpp \
+		  $(SRCDIR)/CommandHandlers.cpp \
+		  $(SRCDIR)/IRCProtocol.cpp \
           $(SRCDIR)/utils.cpp
 
 OBJECTS = $(SOURCES:%.cpp=$(OBJDIR)/%.o)

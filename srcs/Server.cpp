@@ -1,6 +1,7 @@
 #include "Server.hpp"
 #include <iostream>
 #include <ctime>
+#include <unistd.h>
 
 // Constructor/Destructor
 Server::Server() {}
@@ -147,8 +148,19 @@ void Server::disconnectIdleClients(int timeoutSeconds) {
     }
 
     for (std::vector<int>::iterator it = clientsToDisconnect.begin(); it != clientsToDisconnect.end(); ++it) {
-        std::cout << "Disconnecting idle client: fd=" << *it << std::endl;
-        removeClient(*it);
+        int fd = *it;
+        Client* client = getClient(fd);
+        if (client && client->isRegistered()) {
+            // Broadcast QUIT to channels to inform peers
+            std::vector<Channel*> chans = getClientChannels(client);
+            std::string quitMsg = ":" + client->getHostmask() + " QUIT :Ping timeout" + "\r\n";
+            for (std::vector<Channel*>::iterator cit = chans.begin(); cit != chans.end(); ++cit) {
+                (*cit)->broadcast(quitMsg, client);
+            }
+        }
+        std::cout << "Disconnecting idle client: fd=" << fd << std::endl;
+        close(fd);
+        removeClient(fd);
     }
 }
 

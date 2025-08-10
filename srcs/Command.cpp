@@ -18,6 +18,8 @@ void Command::initializeCommandMap() {
     _commandMap["PASS"] = &CommandHandlers::handlePass;
     _commandMap["NICK"] = &CommandHandlers::handleNick;
     _commandMap["USER"] = &CommandHandlers::handleUser;
+    _commandMap["PING"] = &CommandHandlers::handlePing;
+    _commandMap["PONG"] = &CommandHandlers::handlePong;
     _commandMap["JOIN"] = &CommandHandlers::handleJoin;
     _commandMap["PART"] = &CommandHandlers::handlePart;
     _commandMap["PRIVMSG"] = &CommandHandlers::handlePrivmsg;

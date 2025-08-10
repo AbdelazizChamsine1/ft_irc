@@ -56,7 +56,8 @@ bool Channel::isOperator(Client* client) const {
 void Channel::broadcast(const std::string& message, Client* sender) {
     for (std::set<Client*>::iterator it = _members.begin(); it != _members.end(); ++it) {
         if (*it != sender) {
-            (*it)->getOutputBuffer() += message + "\r\n";
+            // Message is expected to already be a complete IRC line (ends with CRLF)
+            (*it)->getOutputBuffer() += message;
         }
     }
 }
@@ -96,14 +97,14 @@ void Channel::setUserLimit(size_t limit) {
 
 std::string Channel::getModeString() const {
     std::string modes = "+";
-    
+
     if (_inviteOnly) modes += "i";
     if (_topicRestricted) modes += "t";
     if (!_key.empty()) modes += "k";
     if (_userLimit > 0) modes += "l";
-    
+
     if (modes == "+") modes = "";
-    
+
     return modes;
 }
 

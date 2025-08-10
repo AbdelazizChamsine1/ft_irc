@@ -7,6 +7,7 @@ Client::Client(int fd)
       _receivedNick(false),
       _receivedUser(false),
       _registered(false),
+    _welcomeSent(false),
       _lastActive(time(NULL)) {}
 
 Client::~Client() {}
@@ -29,6 +30,8 @@ std::string Client::getHostmask() const {
 bool Client::isRegistered() const { return _registered; }
 
 time_t Client::getLastActive() const { return _lastActive; }
+
+bool Client::welcomeSent() const { return _welcomeSent; }
 
 // Setters
 void Client::setNickname(const std::string& nick) {
@@ -70,6 +73,10 @@ void Client::updateLastActive() {
     _lastActive = time(NULL);
 }
 
+void Client::setWelcomeSent(bool v) {
+    _welcomeSent = v;
+}
+
 // Auto-register when all fields are filled
 void Client::tryRegister() {
     if (_receivedPass && _receivedNick && _receivedUser && !_registered) {
@@ -102,7 +109,8 @@ bool Client::hasMessagesToSend() const {
 
 void Client::flushMessagesToOutputBuffer() {
     while (!_outBufQ.empty() && _outputBuffer.empty()) {
-        _outputBuffer = _outBufQ.front() + "\r\n";
+    // Messages enqueued should already contain proper IRC line endings (CRLF)
+    _outputBuffer = _outBufQ.front();
         _outBufQ.pop_front();
     }
 }
@@ -122,24 +130,24 @@ void Client::flushMessagesToOutputBuffer() {
 std::string Client::extractNextLine() {
     size_t pos = _inputBuffer.find("\r\n");
     size_t lineEnd = 2; // Length of "\r\n"
-    
+
     if (pos == std::string::npos) {
         pos = _inputBuffer.find("\n");
         lineEnd = 1; // Length of "\n"
     }
-    
+
     if (pos == std::string::npos) {
         return "";
     }
 
     std::string line = _inputBuffer.substr(0, pos);
     _inputBuffer.erase(0, pos + lineEnd);
-    
+
     // Remove trailing \r if it exists (for mixed line endings)
     if (!line.empty() && line[line.length() - 1] == '\r') {
         line.erase(line.length() - 1);
     }
-    
+
     return line;
 }
 
@@ -148,6 +156,6 @@ std::string Client::extractNextLine() {
 // }
 
 bool Client::hasCompleteLine() const {
-    return _inputBuffer.find("\r\n") != std::string::npos || 
+    return _inputBuffer.find("\r\n") != std::string::npos ||
            _inputBuffer.find("\n") != std::string::npos;
 }

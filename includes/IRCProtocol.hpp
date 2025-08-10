@@ -27,6 +27,8 @@ namespace IRC {
     const std::string ERR_NONICKNAMEGIVEN = "431";
     const std::string ERR_ERRONEUSNICKNAME = "432";
     const std::string ERR_NICKNAMEINUSE = "433";
+    const std::string ERR_NORECIPIENT = "411";
+    const std::string ERR_NOTEXTTOSEND = "412";
     const std::string ERR_USERNOTINCHANNEL = "441";
     const std::string ERR_NOTONCHANNEL = "442";
     const std::string ERR_USERONCHANNEL = "443";

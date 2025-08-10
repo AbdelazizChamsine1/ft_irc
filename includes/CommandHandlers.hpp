@@ -32,6 +32,10 @@ public:
     void handleNotice(Client* client, const std::vector<std::string>& params);
     void handleQuit(Client* client, const std::vector<std::string>& params);
 
+    // Keepalive
+    void handlePing(Client* client, const std::vector<std::string>& params);
+    void handlePong(Client* client, const std::vector<std::string>& params);
+
     // Channel operator commands
     void handleKick(Client* client, const std::vector<std::string>& params);
     void handleInvite(Client* client, const std::vector<std::string>& params);

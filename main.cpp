@@ -113,7 +113,7 @@ void handleNewConnection(int serverFd, Server& server, std::vector<pollfd>& poll
 
         // Add client to server
         server.addClient(clientFd);
-        
+
         // Set hostname for the client
         Client* client = server.getClient(clientFd);
         if (client) {
@@ -130,7 +130,7 @@ void handleNewConnection(int serverFd, Server& server, std::vector<pollfd>& poll
         // Get client IP address
         char clientIP[INET_ADDRSTRLEN];
         inet_ntop(AF_INET, &clientAddr.sin_addr, clientIP, INET_ADDRSTRLEN);
-        
+
         std::cout << "New client connected: " << clientFd << " (IP: " << clientIP << ")" << std::endl;
     }
 }
@@ -145,7 +145,7 @@ std::string getClientDisplayName(Client* client) {
 void logCommand(int clientFd, const std::string& command, Server& server) {
     Client* client = server.getClient(clientFd);
     if (client) {
-        std::cout << "Parsing command from client " << clientFd << " (" 
+        std::cout << "Parsing command from client " << clientFd << " ("
                   << getClientDisplayName(client) << "): " << command << std::endl;
     }
 }
@@ -161,31 +161,34 @@ void handleClientRead(int clientFd, Server& server, Command& commandProcessor) {
 
     if (bytesRead <= 0) {
         if (bytesRead == 0) {
-            std::cout << "Client " << clientFd << " (" << getClientDisplayName(client) 
+            std::cout << "Client " << clientFd << " (" << getClientDisplayName(client)
                       << ") disconnected" << std::endl;
-        } else if (errno != EAGAIN && errno != EWOULDBLOCK) {
-            std::cout << "Client " << clientFd << " (" << getClientDisplayName(client) 
+        } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            // Non-blocking socket would block; handle later
+            return;
+        } else {
+            std::cout << "Client " << clientFd << " (" << getClientDisplayName(client)
                       << ") connection error: " << strerror(errno) << std::endl;
         }
-        
+
         // Handle disconnection - send QUIT to channels
         if (client->isRegistered()) {
             std::vector<Channel*> clientChannels = server.getClientChannels(client);
             std::string quitMsg = ":" + client->getHostmask() + " QUIT :Client disconnected\r\n";
-            
-            for (std::vector<Channel*>::iterator it = clientChannels.begin(); 
+
+            for (std::vector<Channel*>::iterator it = clientChannels.begin();
                  it != clientChannels.end(); ++it) {
                 (*it)->broadcast(quitMsg, client);
             }
         }
-        
+
         // Remove client from server (this will clean up channels too)
         server.removeClient(clientFd);
         return;
     }
 
     buffer[bytesRead] = '\0';
-    
+
     // Convert \n to \r\n for IRC compatibility
     std::string data(buffer, bytesRead);
     std::string ircData = "";
@@ -196,32 +199,32 @@ void handleClientRead(int clientFd, Server& server, Command& commandProcessor) {
             ircData += data[i];
         }
     }
-    
+
     client->appendToInputBuffer(ircData);
 
     // Store registration state before processing
     bool wasRegistered = client->isRegistered();
-    
+
     // Process commands and log them
     std::string& inputBuffer = client->getInputBuffer();
     size_t startPos = 0;
-    
+
     // Extract and log commands before processing
     std::string tempBuffer = inputBuffer;
     while (true) {
         size_t pos = tempBuffer.find("\r\n", startPos);
         if (pos == std::string::npos) break;
-        
+
         std::string command = tempBuffer.substr(startPos, pos - startPos);
         if (!command.empty()) {
             logCommand(clientFd, command, server);
         }
         startPos = pos + 2;
     }
-    
+
     // Process all commands
     commandProcessor.processClientBuffer(client);
-    
+
     // Check if client became registered
     if (!wasRegistered && client->isRegistered()) {
         std::cout << "Welcome sent to " << client->getNickname() << std::endl;
@@ -277,19 +280,31 @@ void updatePollEvents(std::vector<pollfd>& pollFds, Server& server) {
     }
 }
 
+// Prune poll fds that no longer correspond to active clients (e.g., after idle timeouts)
+static void pruneStalePollFds(Server& server, std::vector<pollfd>& pollFds) {
+    for (size_t i = 1; i < pollFds.size(); ) {
+        int fd = pollFds[i].fd;
+        if (server.getClient(fd) == NULL) {
+            pollFds.erase(pollFds.begin() + i);
+            continue;
+        }
+        ++i;
+    }
+}
+
 void handleClientDisconnection(int clientFd, Server& server, std::vector<pollfd>& pollFds) {
     Client* client = server.getClient(clientFd);
     if (client && client->isRegistered()) {
         // Send QUIT to all channels the client is in
         std::vector<Channel*> clientChannels = server.getClientChannels(client);
         std::string quitMsg = ":" + client->getHostmask() + " QUIT :Client disconnected\r\n";
-        
-        for (std::vector<Channel*>::iterator it = clientChannels.begin(); 
+
+        for (std::vector<Channel*>::iterator it = clientChannels.begin();
              it != clientChannels.end(); ++it) {
             (*it)->broadcast(quitMsg, client);
         }
     }
-    
+
     close(clientFd);
     server.removeClient(clientFd);
     removeClientFromPoll(clientFd, pollFds);
@@ -313,8 +328,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Print password as first line
-    std::cout << password << std::endl;
+    // Password received; do not print to stdout
 
     // Setup signal handling
     setupSignalHandling();
@@ -356,6 +370,7 @@ int main(int argc, char* argv[]) {
         time_t currentTime = time(NULL);
         if (currentTime - lastTimeoutCheck >= TIMEOUT_CHECK_INTERVAL) {
             server.disconnectIdleClients(CLIENT_TIMEOUT);
+            pruneStalePollFds(server, pollFds);
             lastTimeoutCheck = currentTime;
         }
 
@@ -389,20 +404,20 @@ int main(int argc, char* argv[]) {
             // Check for errors or hangup
             if (revents & (POLLERR | POLLHUP)) {
                 Client* client = server.getClient(clientFd);
-                std::cout << "Client " << clientFd << " (" << getClientDisplayName(client) 
+                std::cout << "Client " << clientFd << " (" << getClientDisplayName(client)
                           << ") error/hangup" << std::endl;
-                
+
                 // Handle disconnection - send QUIT to channels
                 if (client && client->isRegistered()) {
                     std::vector<Channel*> clientChannels = server.getClientChannels(client);
                     std::string quitMsg = ":" + client->getHostmask() + " QUIT :Client disconnected\r\n";
-                    
-                    for (std::vector<Channel*>::iterator it = clientChannels.begin(); 
+
+                    for (std::vector<Channel*>::iterator it = clientChannels.begin();
                          it != clientChannels.end(); ++it) {
                         (*it)->broadcast(quitMsg, client);
                     }
                 }
-                
+
                 close(clientFd);
                 server.removeClient(clientFd);
                 removeClientFromPoll(clientFd, pollFds);
@@ -436,15 +451,9 @@ int main(int argc, char* argv[]) {
     std::cout << "Shutting down server..." << std::endl;
     close(serverFd);
 
-    // Close all client connections gracefully
+    // Close all client connections
     for (size_t i = 1; i < pollFds.size(); ++i) {
         int clientFd = pollFds[i].fd;
-        Client* client = server.getClient(clientFd);
-        if (client && client->isRegistered()) {
-            // Send a final message to registered clients
-            std::string shutdownMsg = ":localhost ERROR :Server shutting down\r\n";
-            send(clientFd, shutdownMsg.c_str(), shutdownMsg.length(), 0);
-        }
         close(clientFd);
     }
 

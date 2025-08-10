@@ -16,6 +16,7 @@ private:
     bool _receivedNick;
     bool _receivedUser;
     bool _registered;
+    bool _welcomeSent;
 
     std::string _inputBuffer;
     std::string _outputBuffer;
@@ -35,6 +36,7 @@ public:
     std::string getHostmask() const;
     bool isRegistered() const;
     time_t getLastActive() const;
+    bool welcomeSent() const;
 
     // Setters
     void setNickname(const std::string& nick);
@@ -46,6 +48,7 @@ public:
     void setReceivedUser(bool);
     void tryRegister();
     void updateLastActive();
+    void setWelcomeSent(bool v);
 
     // Buffers
     void appendToInputBuffer(const std::string& data);

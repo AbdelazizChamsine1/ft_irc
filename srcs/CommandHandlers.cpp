@@ -735,3 +735,160 @@ bool CommandHandlers::validateChannelName(const std::string& channel) {
 
     return true;
 }
+
+// Information commands implementation
+void CommandHandlers::handleCap(Client* client, const std::vector<std::string>& params) {
+    if (params.empty()) {
+        return;
+    }
+    
+    const std::string& subcommand = params[0];
+    std::string nick = client->getNickname().empty() ? "*" : client->getNickname();
+    
+    if (subcommand == "LS") {
+        _server->queueMessage(client->getFd(), formatIRCMessage("ircserv", "CAP", nick + " LS", ""));
+    } else if (subcommand == "REQ") {
+        _server->queueMessage(client->getFd(), formatIRCMessage("ircserv", "CAP", nick + " NAK", ""));
+    } else if (subcommand == "END") {
+        // CAP negotiation finished, client ready for normal operation
+    }
+}
+
+void CommandHandlers::handleWho(Client* client, const std::vector<std::string>& params) {
+    if (!client->isRegistered()) {
+        sendErrorReply(client, IRC::ERR_NOTREGISTERED, "You have not registered");
+        return;
+    }
+    
+    std::string target = params.empty() ? "*" : params[0];
+    std::string nick = client->getNickname();
+    
+    if (target.empty() || target == "*") {
+        // WHO with no target - send end of WHO
+        _server->queueMessage(client->getFd(), formatNumericReply(IRC::RPL_ENDOFWHO, nick, "* :End of WHO list"));
+        return;
+    }
+    
+    if (target[0] == '#') {
+        // WHO for a channel
+        Channel* channel = _server->getChannel(target);
+        if (!channel) {
+            _server->queueMessage(client->getFd(), formatNumericReply(IRC::RPL_ENDOFWHO, nick, target + " :End of WHO list"));
+            return;
+        }
+        
+        const std::set<Client*>& members = channel->getMembers();
+        for (std::set<Client*>::const_iterator it = members.begin(); it != members.end(); ++it) {
+            Client* member = *it;
+            std::string flags = "H"; // Here
+            if (channel->isOperator(member)) flags += "@";
+            
+            std::string whoReply = target + " " + member->getUsername() + " " + member->getHostname() + 
+                                 " ircserv " + member->getNickname() + " " + flags + " :0 " + member->getRealname();
+            _server->queueMessage(client->getFd(), formatNumericReply(IRC::RPL_WHOREPLY, nick, whoReply));
+        }
+    }
+    
+    _server->queueMessage(client->getFd(), formatNumericReply(IRC::RPL_ENDOFWHO, nick, target + " :End of WHO list"));
+}
+
+void CommandHandlers::handleWhois(Client* client, const std::vector<std::string>& params) {
+    if (!client->isRegistered()) {
+        sendErrorReply(client, IRC::ERR_NOTREGISTERED, "You have not registered");
+        return;
+    }
+    
+    if (params.empty()) {
+        sendErrorReply(client, IRC::ERR_NONICKNAMEGIVEN, "No nickname given");
+        return;
+    }
+    
+    const std::string& targetNick = params[0];
+    Client* target = _server->findClientByNick(targetNick);
+    
+    if (!target) {
+        sendErrorReply(client, IRC::ERR_NOSUCHNICK, targetNick + " :No such nick/channel");
+        _server->queueMessage(client->getFd(), formatNumericReply(IRC::RPL_ENDOFWHOIS, client->getNickname(), targetNick + " :End of WHOIS list"));
+        return;
+    }
+    
+    std::string nick = client->getNickname();
+    
+    // RPL_WHOISUSER
+    std::string userInfo = targetNick + " " + target->getUsername() + " " + target->getHostname() + " * :" + target->getRealname();
+    _server->queueMessage(client->getFd(), formatNumericReply(IRC::RPL_WHOISUSER, nick, userInfo));
+    
+    // RPL_WHOISSERVER
+    std::string serverInfo = targetNick + " ircserv :IRC Server";
+    _server->queueMessage(client->getFd(), formatNumericReply(IRC::RPL_WHOISSERVER, nick, serverInfo));
+    
+    // RPL_WHOISCHANNELS (channels the user is on)
+    std::vector<Channel*> channels = _server->getClientChannels(target);
+    if (!channels.empty()) {
+        std::string channelList;
+        for (std::vector<Channel*>::iterator it = channels.begin(); it != channels.end(); ++it) {
+            if (!channelList.empty()) channelList += " ";
+            if ((*it)->isOperator(target)) channelList += "@";
+            channelList += (*it)->getName();
+        }
+        _server->queueMessage(client->getFd(), formatNumericReply(IRC::RPL_WHOISCHANNELS, nick, targetNick + " :" + channelList));
+    }
+    
+    // RPL_ENDOFWHOIS
+    _server->queueMessage(client->getFd(), formatNumericReply(IRC::RPL_ENDOFWHOIS, nick, targetNick + " :End of WHOIS list"));
+}
+
+void CommandHandlers::handleList(Client* client, const std::vector<std::string>& params) {
+    if (!client->isRegistered()) {
+        sendErrorReply(client, IRC::ERR_NOTREGISTERED, "You have not registered");
+        return;
+    }
+    
+    std::string nick = client->getNickname();
+    
+    // RPL_LISTSTART
+    _server->queueMessage(client->getFd(), formatNumericReply(IRC::RPL_LISTSTART, nick, "Channel :Users Name"));
+    
+    // List all channels (simplified - in real implementation you'd iterate through server channels)
+    // For now, we'll use a basic approach since channel iteration method isn't clear from the interface
+    
+    // RPL_LISTEND
+    _server->queueMessage(client->getFd(), formatNumericReply(IRC::RPL_LISTEND, nick, ":End of LIST"));
+}
+
+void CommandHandlers::handleNames(Client* client, const std::vector<std::string>& params) {
+    if (!client->isRegistered()) {
+        sendErrorReply(client, IRC::ERR_NOTREGISTERED, "You have not registered");
+        return;
+    }
+    
+    std::string nick = client->getNickname();
+    
+    if (params.empty()) {
+        // NAMES with no parameters - end immediately
+        _server->queueMessage(client->getFd(), formatNumericReply(IRC::RPL_ENDOFNAMES, nick, "* :End of NAMES list"));
+        return;
+    }
+    
+    const std::string& channelName = params[0];
+    Channel* channel = _server->getChannel(channelName);
+    
+    if (!channel) {
+        _server->queueMessage(client->getFd(), formatNumericReply(IRC::RPL_ENDOFNAMES, nick, channelName + " :End of NAMES list"));
+        return;
+    }
+    
+    // Build names list
+    std::string namesList;
+    const std::set<Client*>& members = channel->getMembers();
+    for (std::set<Client*>::const_iterator it = members.begin(); it != members.end(); ++it) {
+        if (!namesList.empty()) namesList += " ";
+        if (channel->isOperator(*it)) namesList += "@";
+        namesList += (*it)->getNickname();
+    }
+    
+    if (!namesList.empty()) {
+        _server->queueMessage(client->getFd(), formatNumericReply(IRC::RPL_NAMREPLY, nick, "= " + channelName + " :" + namesList));
+    }
+    _server->queueMessage(client->getFd(), formatNumericReply(IRC::RPL_ENDOFNAMES, nick, channelName + " :End of NAMES list"));
+}

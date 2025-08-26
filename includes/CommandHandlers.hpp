@@ -42,6 +42,13 @@ public:
     void handleTopic(Client* client, const std::vector<std::string>& params);
     void handleMode(Client* client, const std::vector<std::string>& params);
 
+    // Information commands
+    void handleCap(Client* client, const std::vector<std::string>& params);
+    void handleWho(Client* client, const std::vector<std::string>& params);
+    void handleWhois(Client* client, const std::vector<std::string>& params);
+    void handleList(Client* client, const std::vector<std::string>& params);
+    void handleNames(Client* client, const std::vector<std::string>& params);
+
     // Utility functions
     void sendWelcomeSequence(Client* client);
     void sendErrorReply(Client* client, const std::string& code, const std::string& message);

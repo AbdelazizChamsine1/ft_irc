@@ -13,10 +13,21 @@ namespace IRC {
     const std::string RPL_MYINFO = "004";
     
     // Channel operations
+    const std::string RPL_LISTSTART = "321";
+    const std::string RPL_LIST = "322";
+    const std::string RPL_LISTEND = "323";
     const std::string RPL_NOTOPIC = "331";
     const std::string RPL_TOPIC = "332";
+    const std::string RPL_WHOREPLY = "352";
+    const std::string RPL_ENDOFWHO = "315";
     const std::string RPL_NAMREPLY = "353";
     const std::string RPL_ENDOFNAMES = "366";
+    
+    // WHOIS replies
+    const std::string RPL_WHOISUSER = "311";
+    const std::string RPL_WHOISSERVER = "312";
+    const std::string RPL_ENDOFWHOIS = "318";
+    const std::string RPL_WHOISCHANNELS = "319";
     
     // Error codes
     const std::string ERR_NOSUCHNICK = "401";

@@ -29,6 +29,11 @@ void Command::initializeCommandMap() {
     _commandMap["INVITE"] = &CommandHandlers::handleInvite;
     _commandMap["TOPIC"] = &CommandHandlers::handleTopic;
     _commandMap["MODE"] = &CommandHandlers::handleMode;
+    _commandMap["CAP"] = &CommandHandlers::handleCap;
+    _commandMap["WHO"] = &CommandHandlers::handleWho;
+    _commandMap["WHOIS"] = &CommandHandlers::handleWhois;
+    _commandMap["LIST"] = &CommandHandlers::handleList;
+    _commandMap["NAMES"] = &CommandHandlers::handleNames;
 }
 
 void Command::processClientBuffer(Client* client) {

@@ -7,7 +7,7 @@ Client::Client(int fd)
       _receivedNick(false),
       _receivedUser(false),
       _registered(false),
-    _welcomeSent(false),
+      _welcomeSent(false),
       _lastActive(time(NULL)) {}
 
 Client::~Client() {}
@@ -37,13 +37,13 @@ bool Client::welcomeSent() const { return _welcomeSent; }
 void Client::setNickname(const std::string& nick) {
     _nickname = nick;
     _receivedNick = true;
-    tryRegister();
+    // Don't call tryRegister here - let the command handler do it
 }
 
 void Client::setUsername(const std::string& user) {
     _username = user;
     _receivedUser = true;
-    tryRegister();
+    // Don't call tryRegister here - let the command handler do it
 }
 
 void Client::setRealname(const std::string& realname) {
@@ -56,17 +56,17 @@ void Client::setHostname(const std::string& hostname) {
 
 void Client::setReceivedPass(bool received) {
     _receivedPass = received;
-    tryRegister();
+    // Don't call tryRegister here - let the command handler do it
 }
 
 void Client::setReceivedNick(bool received) {
     _receivedNick = received;
-    tryRegister();
+    // Don't call tryRegister here - let the command handler do it
 }
 
 void Client::setReceivedUser(bool received) {
     _receivedUser = received;
-    tryRegister();
+    // Don't call tryRegister here - let the command handler do it
 }
 
 void Client::updateLastActive() {
@@ -77,9 +77,14 @@ void Client::setWelcomeSent(bool v) {
     _welcomeSent = v;
 }
 
-// Auto-register when all fields are filled
+// Check if ready to register, but don't auto-register
+bool Client::canRegister() const {
+    return _receivedPass && _receivedNick && _receivedUser && !_registered && !_nickname.empty() && !_username.empty();
+}
+
+// Manual registration - should be called by command handlers
 void Client::tryRegister() {
-    if (_receivedPass && _receivedNick && _receivedUser && !_registered) {
+    if (canRegister()) {
         _registered = true;
     }
 }
@@ -108,52 +113,35 @@ bool Client::hasMessagesToSend() const {
 }
 
 void Client::flushMessagesToOutputBuffer() {
-    while (!_outBufQ.empty() && _outputBuffer.empty()) {
-    // Messages enqueued should already contain proper IRC line endings (CRLF)
-    _outputBuffer = _outBufQ.front();
+    // Only move one message at a time to avoid overwhelming the output buffer
+    if (_outputBuffer.empty() && !_outBufQ.empty()) {
+        _outputBuffer = _outBufQ.front();
         _outBufQ.pop_front();
     }
 }
 
-// // Line extraction for IRC command parsing
-// std::string Client::extractNextLine() {
-//     size_t pos = _inputBuffer.find("\r\n");
-//     if (pos == std::string::npos) {
-//         return "";
-//     }
-
-//     std::string line = _inputBuffer.substr(0, pos);
-//     _inputBuffer.erase(0, pos + 2);
-//     return line;
-// }
-
 std::string Client::extractNextLine() {
     size_t pos = _inputBuffer.find("\r\n");
-    size_t lineEnd = 2; // Length of "\r\n"
-
-    if (pos == std::string::npos) {
-        pos = _inputBuffer.find("\n");
-        lineEnd = 1; // Length of "\n"
+    if (pos != std::string::npos) {
+        std::string line = _inputBuffer.substr(0, pos);
+        _inputBuffer.erase(0, pos + 2);
+        return line;
     }
-
-    if (pos == std::string::npos) {
-        return "";
+    
+    // Fallback to just \n for compatibility
+    pos = _inputBuffer.find("\n");
+    if (pos != std::string::npos) {
+        std::string line = _inputBuffer.substr(0, pos);
+        _inputBuffer.erase(0, pos + 1);
+        // Remove trailing \r if present (C++98 compatible)
+        if (!line.empty() && line[line.length() - 1] == '\r') {
+            line.erase(line.length() - 1);
+        }
+        return line;
     }
-
-    std::string line = _inputBuffer.substr(0, pos);
-    _inputBuffer.erase(0, pos + lineEnd);
-
-    // Remove trailing \r if it exists (for mixed line endings)
-    if (!line.empty() && line[line.length() - 1] == '\r') {
-        line.erase(line.length() - 1);
-    }
-
-    return line;
+    
+    return "";
 }
-
-// bool Client::hasCompleteLine() const {
-//     return _inputBuffer.find("\r\n") != std::string::npos;
-// }
 
 bool Client::hasCompleteLine() const {
     return _inputBuffer.find("\r\n") != std::string::npos ||

@@ -15,6 +15,9 @@ class Client; // Forward declaration
 class CommandHandlers {
 private:
     Server* _server;
+    
+    // Helper method for registration flow
+    void checkRegistration(Client* client);
 
 public:
     CommandHandlers(Server* server);

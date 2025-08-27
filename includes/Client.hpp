@@ -37,6 +37,9 @@ public:
     bool isRegistered() const;
     time_t getLastActive() const;
     bool welcomeSent() const;
+    
+    // Check if ready to register
+    bool canRegister() const;
 
     // Setters
     void setNickname(const std::string& nick);

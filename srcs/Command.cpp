@@ -4,7 +4,6 @@
 #include <algorithm>
 #include "CommandHandlers.hpp"
 
-
 Command::Command(Server* server) : _server(server) {
     _handlers = new CommandHandlers(server);
     initializeCommandMap();
@@ -37,14 +36,16 @@ void Command::initializeCommandMap() {
 }
 
 void Command::processClientBuffer(Client* client) {
-    std::string& buffer = client->getInputBuffer();
-    
-    // Extract complete commands from buffer
-    std::vector<std::string> commands = extractCompleteCommands(buffer);
-    
-    // Process each complete command
-    for (std::vector<std::string>::iterator it = commands.begin(); it != commands.end(); ++it) {
-        IRCCommand cmd = parseRawCommand(*it);
+    // Extract complete commands from client buffer using the client's own method
+    while (client->hasCompleteLine()) {
+        std::string line = client->extractNextLine();
+        
+        if (line.empty()) {
+            continue; // Skip empty lines
+        }
+        
+        // Parse and execute the command
+        IRCCommand cmd = parseRawCommand(line);
         executeCommand(client, cmd);
     }
 }
@@ -59,26 +60,40 @@ std::vector<std::string> Command::extractCompleteCommands(std::string& buffer) {
         buffer.erase(0, pos + 2); // Remove command + \r\n
     }
     
+    // Also handle lines ending with just \n for better compatibility
+    pos = 0;
+    while ((pos = buffer.find("\n")) != std::string::npos) {
+        std::string command = buffer.substr(0, pos);
+        // Remove trailing \r if present (C++98 compatible)
+        if (!command.empty() && command[command.length() - 1] == '\r') {
+            command.erase(command.length() - 1);
+        }
+        commands.push_back(command);
+        buffer.erase(0, pos + 1); // Remove command + \n
+    }
+    
     return commands;
 }
 
-//unused search why we put it if we don't use it (hicham)
 bool Command::isCommandComplete(const std::string& buffer) {
-    return buffer.find("\r\n") != std::string::npos;
+    return buffer.find("\r\n") != std::string::npos || buffer.find("\n") != std::string::npos;
 }
 
 IRCCommand Command::parseRawCommand(const std::string& rawCommand) {
     IRCCommand cmd;
     std::string line = rawCommand;
     
-    // Remove trailing whitespace
-    while (!line.empty() && (line[line.size() - 1] == ' ' || line[line.size() - 1] == '\t')) {
-    line.erase(line.size() - 1);
+    // Remove trailing whitespace (C++98 compatible)
+    while (!line.empty() && (line[line.length() - 1] == ' ' || 
+                             line[line.length() - 1] == '\t' || 
+                             line[line.length() - 1] == '\r' || 
+                             line[line.length() - 1] == '\n')) {
+        line.erase(line.length() - 1);
     }
     
     // Handle empty commands
     if (line.empty()) {
-        return cmd; // Return empty command (will be ignored)
+        return cmd; // Return empty command
     }
     
     size_t pos = 0;
@@ -89,6 +104,11 @@ IRCCommand Command::parseRawCommand(const std::string& rawCommand) {
         if (pos != std::string::npos) {
             cmd.prefix = line.substr(1, pos - 1);
             line = line.substr(pos + 1);
+            
+            // Skip any extra spaces
+            while (!line.empty() && line[0] == ' ') {
+                line = line.substr(1);
+            }
         }
     }
     
@@ -98,6 +118,11 @@ IRCCommand Command::parseRawCommand(const std::string& rawCommand) {
         cmd.command = line.substr(0, pos);
         line = line.substr(pos + 1);
         
+        // Skip any extra spaces
+        while (!line.empty() && line[0] == ' ') {
+            line = line.substr(1);
+        }
+        
         // Parse parameters
         pos = line.find(" :");
         if (pos != std::string::npos) {
@@ -105,6 +130,9 @@ IRCCommand Command::parseRawCommand(const std::string& rawCommand) {
             std::string params = line.substr(0, pos);
             cmd.trailing = line.substr(pos + 2);
             cmd.params = splitParams(params);
+        } else if (!line.empty() && line[0] == ':') {
+            // Entire remaining line is trailing parameter
+            cmd.trailing = line.substr(1);
         } else {
             // No trailing parameter
             cmd.params = splitParams(line);
@@ -122,6 +150,11 @@ IRCCommand Command::parseRawCommand(const std::string& rawCommand) {
 
 std::vector<std::string> Command::splitParams(const std::string& params) {
     std::vector<std::string> result;
+    
+    if (params.empty()) {
+        return result;
+    }
+    
     std::istringstream iss(params);
     std::string param;
     

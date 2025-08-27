@@ -145,7 +145,7 @@ std::string getClientDisplayName(Client* client) {
 void logCommand(int clientFd, const std::string& command, Server& server) {
     Client* client = server.getClient(clientFd);
     if (client) {
-        std::cout << "Parsing command from client " << clientFd << " ("
+        std::cout << "Command from client " << clientFd << " ("
                   << getClientDisplayName(client) << "): " << command << std::endl;
     }
 }
@@ -164,7 +164,6 @@ void handleClientRead(int clientFd, Server& server, Command& commandProcessor) {
             std::cout << "Client " << clientFd << " (" << getClientDisplayName(client)
                       << ") disconnected" << std::endl;
         } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            // Non-blocking socket would block; handle later
             return;
         } else {
             std::cout << "Client " << clientFd << " (" << getClientDisplayName(client)
@@ -182,52 +181,25 @@ void handleClientRead(int clientFd, Server& server, Command& commandProcessor) {
             }
         }
 
-        // Remove client from server (this will clean up channels too)
         server.removeClient(clientFd);
         return;
     }
 
     buffer[bytesRead] = '\0';
 
-    // Convert \n to \r\n for IRC compatibility
+    // Simply append data without complex line ending conversion
     std::string data(buffer, bytesRead);
-    std::string ircData = "";
-    for (size_t i = 0; i < data.length(); i++) {
-        if (data[i] == '\n' && (i == 0 || data[i-1] != '\r')) {
-            ircData += "\r\n";
-        } else if (data[i] != '\r' || (i + 1 < data.length() && data[i+1] != '\n')) {
-            ircData += data[i];
-        }
-    }
-
-    client->appendToInputBuffer(ircData);
+    client->appendToInputBuffer(data);
 
     // Store registration state before processing
     bool wasRegistered = client->isRegistered();
 
-    // Process commands and log them
-    std::string& inputBuffer = client->getInputBuffer();
-    size_t startPos = 0;
-
-    // Extract and log commands before processing
-    std::string tempBuffer = inputBuffer;
-    while (true) {
-        size_t pos = tempBuffer.find("\r\n", startPos);
-        if (pos == std::string::npos) break;
-
-        std::string command = tempBuffer.substr(startPos, pos - startPos);
-        if (!command.empty()) {
-            logCommand(clientFd, command, server);
-        }
-        startPos = pos + 2;
-    }
-
-    // Process all commands
+    // Process commands using the improved command processor
     commandProcessor.processClientBuffer(client);
 
     // Check if client became registered
     if (!wasRegistered && client->isRegistered()) {
-        std::cout << "Welcome sent to " << client->getNickname() << std::endl;
+        std::cout << "Client " << clientFd << " (" << client->getNickname() << ") registered successfully" << std::endl;
     }
 }
 
@@ -280,7 +252,7 @@ void updatePollEvents(std::vector<pollfd>& pollFds, Server& server) {
     }
 }
 
-// Prune poll fds that no longer correspond to active clients (e.g., after idle timeouts)
+// Prune poll fds that no longer correspond to active clients
 static void pruneStalePollFds(Server& server, std::vector<pollfd>& pollFds) {
     for (size_t i = 1; i < pollFds.size(); ) {
         int fd = pollFds[i].fd;
@@ -290,24 +262,6 @@ static void pruneStalePollFds(Server& server, std::vector<pollfd>& pollFds) {
         }
         ++i;
     }
-}
-
-void handleClientDisconnection(int clientFd, Server& server, std::vector<pollfd>& pollFds) {
-    Client* client = server.getClient(clientFd);
-    if (client && client->isRegistered()) {
-        // Send QUIT to all channels the client is in
-        std::vector<Channel*> clientChannels = server.getClientChannels(client);
-        std::string quitMsg = ":" + client->getHostmask() + " QUIT :Client disconnected\r\n";
-
-        for (std::vector<Channel*>::iterator it = clientChannels.begin();
-             it != clientChannels.end(); ++it) {
-            (*it)->broadcast(quitMsg, client);
-        }
-    }
-
-    close(clientFd);
-    server.removeClient(clientFd);
-    removeClientFromPoll(clientFd, pollFds);
 }
 
 int main(int argc, char* argv[]) {
@@ -327,8 +281,6 @@ int main(int argc, char* argv[]) {
         std::cerr << "Error: Password cannot be empty" << std::endl;
         return 1;
     }
-
-    // Password received; do not print to stdout
 
     // Setup signal handling
     setupSignalHandling();
@@ -358,8 +310,8 @@ int main(int argc, char* argv[]) {
 
     // Variables for timeout handling
     time_t lastTimeoutCheck = time(NULL);
-    const int TIMEOUT_CHECK_INTERVAL = 60; // Check every 60 seconds
-    const int CLIENT_TIMEOUT = 300; // 5 minutes idle timeout
+    const int TIMEOUT_CHECK_INTERVAL = 60;
+    const int CLIENT_TIMEOUT = 300;
 
     // Main poll loop
     while (!g_shutdown) {
@@ -374,12 +326,11 @@ int main(int argc, char* argv[]) {
             lastTimeoutCheck = currentTime;
         }
 
-        // Poll with 100ms timeout
-        int pollResult = poll(&pollFds[0], pollFds.size(), 100);
+        // Poll with 1000ms timeout for better responsiveness
+        int pollResult = poll(&pollFds[0], pollFds.size(), 1000);
 
         if (pollResult == -1) {
             if (errno == EINTR) {
-                // Interrupted by signal, continue
                 continue;
             }
             perror("poll");
@@ -387,7 +338,6 @@ int main(int argc, char* argv[]) {
         }
 
         if (pollResult == 0) {
-            // Timeout, continue
             continue;
         }
 
@@ -407,7 +357,6 @@ int main(int argc, char* argv[]) {
                 std::cout << "Client " << clientFd << " (" << getClientDisplayName(client)
                           << ") error/hangup" << std::endl;
 
-                // Handle disconnection - send QUIT to channels
                 if (client && client->isRegistered()) {
                     std::vector<Channel*> clientChannels = server.getClientChannels(client);
                     std::string quitMsg = ":" + client->getHostmask() + " QUIT :Client disconnected\r\n";
@@ -421,7 +370,7 @@ int main(int argc, char* argv[]) {
                 close(clientFd);
                 server.removeClient(clientFd);
                 removeClientFromPoll(clientFd, pollFds);
-                continue; // Don't increment i
+                continue;
             }
 
             // Handle read
@@ -431,10 +380,9 @@ int main(int argc, char* argv[]) {
                 // Check if client disconnected during command processing
                 Client* client = server.getClient(clientFd);
                 if (!client) {
-                    std::cout << "Client " << clientFd << " disconnected during processing" << std::endl;
                     close(clientFd);
                     removeClientFromPoll(clientFd, pollFds);
-                    continue; // Don't increment i
+                    continue;
                 }
             }
 

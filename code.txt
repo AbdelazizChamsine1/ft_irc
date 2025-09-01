@@ -1,0 +1,2610 @@
+The following is a digest of the repository "ft_irc.git".
+This digest is designed to be easily parsed by Large Language Models.
+
+--- SUMMARY ---
+Repository: ft_irc.git
+Files Analyzed: 17
+Total Text Size: 81.65 KB
+Estimated Tokens (text only): ~20,310
+
+--- DIRECTORY STRUCTURE ---
+ft_irc.git/
+├── includes/
+│   ├── Channel.hpp
+│   ├── Client.hpp
+│   ├── Command.hpp
+│   ├── CommandHandlers.hpp
+│   ├── IRCProtocol.hpp
+│   ├── Server.hpp
+│   └── utils.hpp
+├── srcs/
+│   ├── Channel.cpp
+│   ├── Client.cpp
+│   ├── Command.cpp
+│   ├── CommandHandlers.cpp
+│   ├── IRCProtocol.cpp
+│   ├── Server.cpp
+│   └── utils.cpp
+├── main.cpp
+├── Makefile
+└── README.md
+
+
+--- FILE CONTENTS ---
+============================================================
+FILE: includes/Channel.hpp
+============================================================
+#ifndef CHANNEL_HPP
+#define CHANNEL_HPP
+
+#include <string>
+#include <set>
+#include <map>
+
+class Client; // Forward declaration
+
+class Channel {
+private:
+    std::string _name;
+    std::string _topic;
+    std::set<Client*> _members;
+    std::set<Client*> _operators;
+    
+    // Channel modes
+    bool _inviteOnly;      // +i mode
+    bool _topicRestricted; // +t mode
+    std::string _key;      // +k mode (password)
+    size_t _userLimit;     // +l mode (0 = no limit)
+    
+    // Invite list (simple session-based)
+    std::set<Client*> _invitedClients;
+
+public:
+    Channel(const std::string& name);
+    ~Channel();
+
+    // Basic info
+    const std::string& getName() const;
+    const std::string& getTopic() const;
+    void setTopic(const std::string& topic);
+
+    // Membership
+    void addClient(Client* client);
+    void removeClient(Client* client);
+    bool hasClient(Client* client) const;
+    const std::set<Client*>& getMembers() const;
+
+
+    // Operators
+    void addOperator(Client* client);
+    void removeOperator(Client* client);
+    bool isOperator(Client* client) const;
+
+    // Messaging
+    void broadcast(const std::string& message, Client* sender);
+    
+    // Modes
+    bool isInviteOnly() const;
+    bool isTopicRestricted() const;
+    const std::string& getKey() const;
+    size_t getUserLimit() const;
+    
+    void setInviteOnly(bool inviteOnly);
+    void setTopicRestricted(bool topicRestricted);
+    void setKey(const std::string& key);
+    void setUserLimit(size_t limit);
+    
+    std::string getModeString() const;
+    
+    // Invite management
+    void addInvite(Client* client);
+    void removeInvite(Client* client);
+    bool isInvited(Client* client) const;
+};
+
+#endif
+
+
+============================================================
+FILE: includes/Client.hpp
+============================================================
+#ifndef CLIENT_HPP
+#define CLIENT_HPP
+
+#include <string>
+#include <deque>
+#include <ctime>
+
+class Client {
+private:
+    int _fd;
+    std::string _nickname;
+    std::string _username;
+    std::string _realname;
+    std::string _hostname;
+    bool _receivedPass;
+    bool _receivedNick;
+    bool _receivedUser;
+    bool _registered;
+    bool _welcomeSent;
+
+    std::string _inputBuffer;
+    std::string _outputBuffer;
+    std::deque<std::string> _outBufQ;  // Message queue for better I/O handling
+    time_t _lastActive;                // For timeout tracking
+
+public:
+    Client(int fd);
+    ~Client();
+
+    // Getters
+    int getFd() const;
+    const std::string& getNickname() const;
+    const std::string& getUsername() const;
+    const std::string& getRealname() const;
+    const std::string& getHostname() const;
+    std::string getHostmask() const;
+    bool isRegistered() const;
+    time_t getLastActive() const;
+    bool welcomeSent() const;
+    
+    // Check if ready to register
+    bool canRegister() const;
+
+    // Setters
+    void setNickname(const std::string& nick);
+    void setUsername(const std::string& user);
+    void setRealname(const std::string& realname);
+    void setHostname(const std::string& hostname);
+    void setReceivedPass(bool);
+    void setReceivedNick(bool);
+    void setReceivedUser(bool);
+    void tryRegister();
+    void updateLastActive();
+    void setWelcomeSent(bool v);
+
+    // Buffers
+    void appendToInputBuffer(const std::string& data);
+    std::string& getInputBuffer();
+    std::string& getOutputBuffer();
+
+    // Message queue handling
+    void enqueueMessage(const std::string& message);
+    bool hasMessagesToSend() const;
+    void flushMessagesToOutputBuffer();
+
+    // Line extraction for IRC command parsing
+    std::string extractNextLine();
+    bool hasCompleteLine() const;
+};
+
+#endif
+
+============================================================
+FILE: includes/Command.hpp
+============================================================
+#ifndef COMMAND_HPP
+#define COMMAND_HPP
+
+#include <string>
+#include <vector>
+#include <map>
+#include "Client.hpp"
+#include "Server.hpp"
+#include "CommandHandlers.hpp"
+#include "IRCProtocol.hpp"
+
+class Server; // Forward declaration
+class Client; // Forward declaration
+class CommandHandlers; // Forward declaration
+
+class Command {
+private:
+    Server* _server;
+    CommandHandlers* _handlers;
+    std::map<std::string, void (CommandHandlers::*)(Client*, const std::vector<std::string>&)> _commandMap;
+
+    void initializeCommandMap();
+    IRCCommand parseRawCommand(const std::string& rawCommand);
+    std::vector<std::string> splitParams(const std::string& params);
+
+public:
+    Command(Server* server);
+    ~Command();
+
+    // Main command processing
+    void processClientBuffer(Client* client);
+    void executeCommand(Client* client, const IRCCommand& cmd);
+
+    // Buffer processing utilities
+    std::vector<std::string> extractCompleteCommands(std::string& buffer);
+    bool isCommandComplete(const std::string& buffer);
+};
+
+#endif
+
+============================================================
+FILE: includes/CommandHandlers.hpp
+============================================================
+#ifndef COMMANDHANDLERS_HPP
+#define COMMANDHANDLERS_HPP
+
+#include <string>
+#include <vector>
+#include "Client.hpp"
+#include "Server.hpp"
+#include "IRCProtocol.hpp"
+#include <iostream>
+#include <cstdlib>
+
+class Server; // Forward declaration
+class Client; // Forward declaration
+
+class CommandHandlers {
+private:
+    Server* _server;
+    
+    // Helper method for registration flow
+    void checkRegistration(Client* client);
+
+public:
+    CommandHandlers(Server* server);
+    ~CommandHandlers();
+
+    // Authentication commands
+    void handlePass(Client* client, const std::vector<std::string>& params);
+    void handleNick(Client* client, const std::vector<std::string>& params);
+    void handleUser(Client* client, const std::vector<std::string>& params);
+
+    // Communication commands
+    void handleJoin(Client* client, const std::vector<std::string>& params);
+    void handlePart(Client* client, const std::vector<std::string>& params);
+    void handlePrivmsg(Client* client, const std::vector<std::string>& params);
+    void handleNotice(Client* client, const std::vector<std::string>& params);
+    void handleQuit(Client* client, const std::vector<std::string>& params);
+
+    // Keepalive
+    void handlePing(Client* client, const std::vector<std::string>& params);
+    void handlePong(Client* client, const std::vector<std::string>& params);
+
+    // Channel operator commands
+    void handleKick(Client* client, const std::vector<std::string>& params);
+    void handleInvite(Client* client, const std::vector<std::string>& params);
+    void handleTopic(Client* client, const std::vector<std::string>& params);
+    void handleMode(Client* client, const std::vector<std::string>& params);
+
+    // Information commands
+    void handleCap(Client* client, const std::vector<std::string>& params);
+    void handleWho(Client* client, const std::vector<std::string>& params);
+    void handleWhois(Client* client, const std::vector<std::string>& params);
+    void handleList(Client* client, const std::vector<std::string>& params);
+    void handleNames(Client* client, const std::vector<std::string>& params);
+
+    // Utility functions
+    void sendWelcomeSequence(Client* client);
+    void sendErrorReply(Client* client, const std::string& code, const std::string& message);
+    bool validateNickname(const std::string& nickname);
+    bool validateChannelName(const std::string& channel);
+};
+
+#endif
+
+============================================================
+FILE: includes/IRCProtocol.hpp
+============================================================
+#ifndef IRCPROTOCOL_HPP
+#define IRCPROTOCOL_HPP
+
+#include <string>
+#include <vector>
+
+// IRC Numeric Reply Codes
+namespace IRC {
+    // Welcome messages
+    const std::string RPL_WELCOME = "001";
+    const std::string RPL_YOURHOST = "002";
+    const std::string RPL_CREATED = "003";
+    const std::string RPL_MYINFO = "004";
+    
+    // Channel operations
+    const std::string RPL_LISTSTART = "321";
+    const std::string RPL_LIST = "322";
+    const std::string RPL_LISTEND = "323";
+    const std::string RPL_NOTOPIC = "331";
+    const std::string RPL_TOPIC = "332";
+    const std::string RPL_WHOREPLY = "352";
+    const std::string RPL_ENDOFWHO = "315";
+    const std::string RPL_NAMREPLY = "353";
+    const std::string RPL_ENDOFNAMES = "366";
+    
+    // WHOIS replies
+    const std::string RPL_WHOISUSER = "311";
+    const std::string RPL_WHOISSERVER = "312";
+    const std::string RPL_ENDOFWHOIS = "318";
+    const std::string RPL_WHOISCHANNELS = "319";
+    
+    // Error codes
+    const std::string ERR_NOSUCHNICK = "401";
+    const std::string ERR_NOSUCHCHANNEL = "403";
+    const std::string ERR_CANNOTSENDTOCHAN = "404";
+    const std::string ERR_TOOMANYCHANNELS = "405";
+    const std::string ERR_UNKNOWNCOMMAND = "421";
+    const std::string ERR_NONICKNAMEGIVEN = "431";
+    const std::string ERR_ERRONEUSNICKNAME = "432";
+    const std::string ERR_NICKNAMEINUSE = "433";
+    const std::string ERR_NORECIPIENT = "411";
+    const std::string ERR_NOTEXTTOSEND = "412";
+    const std::string ERR_USERNOTINCHANNEL = "441";
+    const std::string ERR_NOTONCHANNEL = "442";
+    const std::string ERR_USERONCHANNEL = "443";
+    const std::string ERR_NOTREGISTERED = "451";
+    const std::string ERR_NEEDMOREPARAMS = "461";
+    const std::string ERR_ALREADYREGISTRED = "462";
+    const std::string ERR_PASSWDMISMATCH = "464";
+    const std::string ERR_CHANNELISFULL = "471";
+    const std::string ERR_UNKNOWNMODE = "472";
+    const std::string ERR_INVITEONLYCHAN = "473";
+    const std::string ERR_BANNEDFROMCHAN = "474";
+    const std::string ERR_BADCHANNELKEY = "475";
+    const std::string ERR_CHANOPRIVSNEEDED = "482";
+}
+
+// IRC Command structure
+struct IRCCommand {
+    std::string prefix;
+    std::string command;
+    std::vector<std::string> params;
+    std::string trailing;
+};
+
+// Protocol utility functions
+std::string formatIRCMessage(const std::string& prefix, const std::string& command, 
+                             const std::string& target, const std::string& message);
+std::string formatNumericReply(const std::string& code, const std::string& target, 
+                              const std::string& message);
+
+#endif
+
+============================================================
+FILE: includes/Server.hpp
+============================================================
+#ifndef SERVER_HPP
+#define SERVER_HPP
+
+#include <map>
+#include <string>
+#include <vector>
+#include <set>
+#include "Client.hpp"
+#include "Channel.hpp"
+
+class Server {
+private:
+    std::map<int, Client*> _clients;                     // socket fd → Client
+    std::map<std::string, Channel*> _channels;           // channel name → Channel
+    std::string _password;                               // server password
+
+public:
+    Server();
+    Server(const std::string& password);
+    ~Server();
+
+    // Configuration
+    void setPassword(const std::string& password);
+    const std::string& getPassword() const;
+
+    // Client management
+    void addClient(int fd);
+    void removeClient(int fd);
+    Client* getClient(int fd);
+    Client* findClientByNick(const std::string& nickname);
+    bool isNicknameInUse(const std::string& nickname);
+
+    // Channel management
+    Channel* getChannel(const std::string& name);
+    Channel* createChannel(const std::string& name);
+    void removeClientFromAllChannels(Client* client);
+    void deleteChannelIfEmpty(Channel* channel);
+
+    // Messaging - Enhanced for I/O layer
+    void queueMessage(int clientFd, const std::string& message);
+        
+    // Channel utilities
+    std::vector<Channel*> getClientChannels(Client* client);
+    void sendMessage(int clientFd, const std::string& message);
+    void broadcast(const std::set<int>& targets, const std::string& message);
+
+    // I/O Interface methods
+    void flushClientMessages(int clientFd);
+    bool hasClientMessagesToSend(int clientFd) const;
+
+    // Timeout handling
+    void disconnectIdleClients(int timeoutSeconds);
+};
+
+#endif
+
+
+============================================================
+FILE: includes/utils.hpp
+============================================================
+#ifndef UTILS_HPP
+#define UTILS_HPP
+
+#include <string>
+#include <vector>
+
+// IRC message parsing utilities
+namespace IRCUtils {
+    // Extract complete IRC lines from a buffer
+    std::vector<std::string> extractLines(std::string& buffer);
+
+    // Parse IRC command line into components
+    struct IRCMessage {
+        std::string prefix;
+        std::string command;
+        std::vector<std::string> params;
+    };
+
+    IRCMessage parseIRCMessage(const std::string& line);
+
+    // IRC reply formatting
+    std::string formatReply(int code, const std::string& target, const std::string& message);
+
+    // Common IRC numeric replies
+    const int RPL_WELCOME = 001;
+    const int RPL_YOURHOST = 002;
+    const int RPL_CREATED = 003;
+    const int RPL_MYINFO = 004;
+    const int ERR_NONICKNAMEGIVEN = 431;
+    const int ERR_ERRONEUSNICKNAME = 432;
+    const int ERR_NICKNAMEINUSE = 433;
+    const int ERR_NEEDMOREPARAMS = 461;
+    const int ERR_ALREADYREGISTRED = 462;
+    const int ERR_PASSWDMISMATCH = 464;
+}
+
+#endif
+
+
+============================================================
+FILE: srcs/Channel.cpp
+============================================================
+#include "Channel.hpp"
+#include "Client.hpp"
+
+Channel::Channel(const std::string& name)
+    : _name(name), _topic(""), _inviteOnly(false), _topicRestricted(true), _key(""), _userLimit(0) {}
+
+Channel::~Channel() {}
+
+// Basic info
+const std::string& Channel::getName() const {
+    return _name;
+}
+
+const std::string& Channel::getTopic() const {
+    return _topic;
+}
+
+void Channel::setTopic(const std::string& topic) {
+    _topic = topic;
+}
+
+// Membership
+void Channel::addClient(Client* client) {
+    _members.insert(client);
+}
+
+void Channel::removeClient(Client* client) {
+    _members.erase(client);
+    _operators.erase(client); // Remove operator role if leaving
+    _invitedClients.erase(client); // Remove from invite list when leaving
+}
+
+bool Channel::hasClient(Client* client) const {
+    return _members.find(client) != _members.end();
+}
+
+const std::set<Client*>& Channel::getMembers() const {
+    return _members;
+}
+
+
+// Operators
+void Channel::addOperator(Client* client) {
+    _operators.insert(client);
+}
+
+void Channel::removeOperator(Client* client) {
+    _operators.erase(client);
+}
+
+bool Channel::isOperator(Client* client) const {
+    return _operators.find(client) != _operators.end();
+}
+
+// Messaging
+void Channel::broadcast(const std::string& message, Client* sender) {
+    for (std::set<Client*>::iterator it = _members.begin(); it != _members.end(); ++it) {
+        if (*it != sender) {
+            // Message is expected to already be a complete IRC line (ends with CRLF)
+            (*it)->getOutputBuffer() += message;
+        }
+    }
+}
+
+// Mode methods
+bool Channel::isInviteOnly() const {
+    return _inviteOnly;
+}
+
+bool Channel::isTopicRestricted() const {
+    return _topicRestricted;
+}
+
+const std::string& Channel::getKey() const {
+    return _key;
+}
+
+size_t Channel::getUserLimit() const {
+    return _userLimit;
+}
+
+void Channel::setInviteOnly(bool inviteOnly) {
+    _inviteOnly = inviteOnly;
+}
+
+void Channel::setTopicRestricted(bool topicRestricted) {
+    _topicRestricted = topicRestricted;
+}
+
+void Channel::setKey(const std::string& key) {
+    _key = key;
+}
+
+void Channel::setUserLimit(size_t limit) {
+    _userLimit = limit;
+}
+
+std::string Channel::getModeString() const {
+    std::string modes = "+";
+
+    if (_inviteOnly) modes += "i";
+    if (_topicRestricted) modes += "t";
+    if (!_key.empty()) modes += "k";
+    if (_userLimit > 0) modes += "l";
+
+    if (modes == "+") modes = "";
+
+    return modes;
+}
+
+// Invite management
+void Channel::addInvite(Client* client) {
+    _invitedClients.insert(client);
+}
+
+void Channel::removeInvite(Client* client) {
+    _invitedClients.erase(client);
+}
+
+bool Channel::isInvited(Client* client) const {
+    return _invitedClients.find(client) != _invitedClients.end();
+}
+
+
+============================================================
+FILE: srcs/Client.cpp
+============================================================
+#include "Client.hpp"
+#include <ctime>
+
+Client::Client(int fd)
+    : _fd(fd),
+      _receivedPass(false),
+      _receivedNick(false),
+      _receivedUser(false),
+      _registered(false),
+      _welcomeSent(false),
+      _lastActive(time(NULL)) {}
+
+Client::~Client() {}
+
+// Getters
+int Client::getFd() const { return _fd; }
+
+const std::string& Client::getNickname() const { return _nickname; }
+
+const std::string& Client::getUsername() const { return _username; }
+
+const std::string& Client::getRealname() const { return _realname; }
+
+const std::string& Client::getHostname() const { return _hostname; }
+
+std::string Client::getHostmask() const {
+    return _nickname + "!" + _username + "@" + _hostname;
+}
+
+bool Client::isRegistered() const { return _registered; }
+
+time_t Client::getLastActive() const { return _lastActive; }
+
+bool Client::welcomeSent() const { return _welcomeSent; }
+
+// Setters
+void Client::setNickname(const std::string& nick) {
+    _nickname = nick;
+    _receivedNick = true;
+    // Don't call tryRegister here - let the command handler do it
+}
+
+void Client::setUsername(const std::string& user) {
+    _username = user;
+    _receivedUser = true;
+    // Don't call tryRegister here - let the command handler do it
+}
+
+void Client::setRealname(const std::string& realname) {
+    _realname = realname;
+}
+
+void Client::setHostname(const std::string& hostname) {
+    _hostname = hostname;
+}
+
+void Client::setReceivedPass(bool received) {
+    _receivedPass = received;
+    // Don't call tryRegister here - let the command handler do it
+}
+
+void Client::setReceivedNick(bool received) {
+    _receivedNick = received;
+    // Don't call tryRegister here - let the command handler do it
+}
+
+void Client::setReceivedUser(bool received) {
+    _receivedUser = received;
+    // Don't call tryRegister here - let the command handler do it
+}
+
+void Client::updateLastActive() {
+    _lastActive = time(NULL);
+}
+
+void Client::setWelcomeSent(bool v) {
+    _welcomeSent = v;
+}
+
+// Check if ready to register, but don't auto-register
+bool Client::canRegister() const {
+    return _receivedPass && _receivedNick && _receivedUser && !_registered && !_nickname.empty() && !_username.empty();
+}
+
+// Manual registration - should be called by command handlers
+void Client::tryRegister() {
+    if (canRegister()) {
+        _registered = true;
+    }
+}
+
+// Buffer handling
+void Client::appendToInputBuffer(const std::string& data) {
+    _inputBuffer += data;
+    updateLastActive();
+}
+
+std::string& Client::getInputBuffer() {
+    return _inputBuffer;
+}
+
+std::string& Client::getOutputBuffer() {
+    return _outputBuffer;
+}
+
+// Message queue handling
+void Client::enqueueMessage(const std::string& message) {
+    _outBufQ.push_back(message);
+}
+
+bool Client::hasMessagesToSend() const {
+    return !_outBufQ.empty() || !_outputBuffer.empty();
+}
+
+void Client::flushMessagesToOutputBuffer() {
+    // Only move one message at a time to avoid overwhelming the output buffer
+    if (_outputBuffer.empty() && !_outBufQ.empty()) {
+        _outputBuffer = _outBufQ.front();
+        _outBufQ.pop_front();
+    }
+}
+
+std::string Client::extractNextLine() {
+    size_t pos = _inputBuffer.find("\r\n");
+    if (pos != std::string::npos) {
+        std::string line = _inputBuffer.substr(0, pos);
+        _inputBuffer.erase(0, pos + 2);
+        return line;
+    }
+    
+    // Fallback to just \n for compatibility
+    pos = _inputBuffer.find("\n");
+    if (pos != std::string::npos) {
+        std::string line = _inputBuffer.substr(0, pos);
+        _inputBuffer.erase(0, pos + 1);
+        // Remove trailing \r if present (C++98 compatible)
+        if (!line.empty() && line[line.length() - 1] == '\r') {
+            line.erase(line.length() - 1);
+        }
+        return line;
+    }
+    
+    return "";
+}
+
+bool Client::hasCompleteLine() const {
+    return _inputBuffer.find("\r\n") != std::string::npos ||
+           _inputBuffer.find("\n") != std::string::npos;
+}
+
+============================================================
+FILE: srcs/Command.cpp
+============================================================
+#include "Command.hpp"
+#include <iostream>
+#include <sstream>
+#include <algorithm>
+#include "CommandHandlers.hpp"
+
+Command::Command(Server* server) : _server(server) {
+    _handlers = new CommandHandlers(server);
+    initializeCommandMap();
+}
+
+Command::~Command() {
+    delete _handlers;
+}
+
+void Command::initializeCommandMap() {
+    _commandMap["PASS"] = &CommandHandlers::handlePass;
+    _commandMap["NICK"] = &CommandHandlers::handleNick;
+    _commandMap["USER"] = &CommandHandlers::handleUser;
+    _commandMap["PING"] = &CommandHandlers::handlePing;
+    _commandMap["PONG"] = &CommandHandlers::handlePong;
+    _commandMap["JOIN"] = &CommandHandlers::handleJoin;
+    _commandMap["PART"] = &CommandHandlers::handlePart;
+    _commandMap["PRIVMSG"] = &CommandHandlers::handlePrivmsg;
+    _commandMap["NOTICE"] = &CommandHandlers::handleNotice;
+    _commandMap["QUIT"] = &CommandHandlers::handleQuit;
+    _commandMap["KICK"] = &CommandHandlers::handleKick;
+    _commandMap["INVITE"] = &CommandHandlers::handleInvite;
+    _commandMap["TOPIC"] = &CommandHandlers::handleTopic;
+    _commandMap["MODE"] = &CommandHandlers::handleMode;
+    _commandMap["CAP"] = &CommandHandlers::handleCap;
+    _commandMap["WHO"] = &CommandHandlers::handleWho;
+    _commandMap["WHOIS"] = &CommandHandlers::handleWhois;
+    _commandMap["LIST"] = &CommandHandlers::handleList;
+    _commandMap["NAMES"] = &CommandHandlers::handleNames;
+}
+
+void Command::processClientBuffer(Client* client) {
+    // Extract complete commands from client buffer using the client's own method
+    while (client->hasCompleteLine()) {
+        std::string line = client->extractNextLine();
+        
+        if (line.empty()) {
+            continue; // Skip empty lines
+        }
+        
+        // Parse and execute the command
+        IRCCommand cmd = parseRawCommand(line);
+        executeCommand(client, cmd);
+    }
+}
+
+std::vector<std::string> Command::extractCompleteCommands(std::string& buffer) {
+    std::vector<std::string> commands;
+    size_t pos = 0;
+    
+    while ((pos = buffer.find("\r\n")) != std::string::npos) {
+        std::string command = buffer.substr(0, pos);
+        commands.push_back(command);
+        buffer.erase(0, pos + 2); // Remove command + \r\n
+    }
+    
+    // Also handle lines ending with just \n for better compatibility
+    pos = 0;
+    while ((pos = buffer.find("\n")) != std::string::npos) {
+        std::string command = buffer.substr(0, pos);
+        // Remove trailing \r if present (C++98 compatible)
+        if (!command.empty() && command[command.length() - 1] == '\r') {
+            command.erase(command.length() - 1);
+        }
+        commands.push_back(command);
+        buffer.erase(0, pos + 1); // Remove command + \n
+    }
+    
+    return commands;
+}
+
+bool Command::isCommandComplete(const std::string& buffer) {
+    return buffer.find("\r\n") != std::string::npos || buffer.find("\n") != std::string::npos;
+}
+
+IRCCommand Command::parseRawCommand(const std::string& rawCommand) {
+    IRCCommand cmd;
+    std::string line = rawCommand;
+    
+    // Remove trailing whitespace (C++98 compatible)
+    while (!line.empty() && (line[line.length() - 1] == ' ' || 
+                             line[line.length() - 1] == '\t' || 
+                             line[line.length() - 1] == '\r' || 
+                             line[line.length() - 1] == '\n')) {
+        line.erase(line.length() - 1);
+    }
+    
+    // Handle empty commands
+    if (line.empty()) {
+        return cmd; // Return empty command
+    }
+    
+    size_t pos = 0;
+    
+    // Parse prefix (if exists)
+    if (!line.empty() && line[0] == ':') {
+        pos = line.find(' ');
+        if (pos != std::string::npos) {
+            cmd.prefix = line.substr(1, pos - 1);
+            line = line.substr(pos + 1);
+            
+            // Skip any extra spaces
+            while (!line.empty() && line[0] == ' ') {
+                line = line.substr(1);
+            }
+        }
+    }
+    
+    // Parse command
+    pos = line.find(' ');
+    if (pos != std::string::npos) {
+        cmd.command = line.substr(0, pos);
+        line = line.substr(pos + 1);
+        
+        // Skip any extra spaces
+        while (!line.empty() && line[0] == ' ') {
+            line = line.substr(1);
+        }
+        
+        // Parse parameters
+        pos = line.find(" :");
+        if (pos != std::string::npos) {
+            // Has trailing parameter
+            std::string params = line.substr(0, pos);
+            cmd.trailing = line.substr(pos + 2);
+            cmd.params = splitParams(params);
+        } else if (!line.empty() && line[0] == ':') {
+            // Entire remaining line is trailing parameter
+            cmd.trailing = line.substr(1);
+        } else {
+            // No trailing parameter
+            cmd.params = splitParams(line);
+        }
+    } else {
+        // Command with no parameters
+        cmd.command = line;
+    }
+    
+    // Convert command to uppercase for consistency
+    std::transform(cmd.command.begin(), cmd.command.end(), cmd.command.begin(), ::toupper);
+    
+    return cmd;
+}
+
+std::vector<std::string> Command::splitParams(const std::string& params) {
+    std::vector<std::string> result;
+    
+    if (params.empty()) {
+        return result;
+    }
+    
+    std::istringstream iss(params);
+    std::string param;
+    
+    while (iss >> param) {
+        result.push_back(param);
+    }
+    
+    return result;
+}
+
+void Command::executeCommand(Client* client, const IRCCommand& cmd) {
+    // Ignore empty commands
+    if (cmd.command.empty()) {
+        return;
+    }
+    
+    // Find command handler
+    std::map<std::string, void (CommandHandlers::*)(Client*, const std::vector<std::string>&)>::iterator it;
+    it = _commandMap.find(cmd.command);
+    
+    if (it != _commandMap.end()) {
+        // Prepare parameters (include trailing if exists)
+        std::vector<std::string> allParams = cmd.params;
+        if (!cmd.trailing.empty()) {
+            allParams.push_back(cmd.trailing);
+        }
+        
+        // Call the appropriate handler
+        ((_handlers)->*(it->second))(client, allParams);
+    } else {
+        // Unknown command
+        _handlers->sendErrorReply(client, IRC::ERR_UNKNOWNCOMMAND, cmd.command + " :Unknown command");
+    }
+}
+
+============================================================
+FILE: srcs/CommandHandlers.cpp
+============================================================
+#include "CommandHandlers.hpp"
+#include "Server.hpp"
+#include "Channel.hpp"
+
+CommandHandlers::CommandHandlers(Server* server) : _server(server) {}
+
+CommandHandlers::~CommandHandlers() {}
+
+// Check if client should be registered and send welcome if needed
+void CommandHandlers::checkRegistration(Client* client) {
+    if (client->canRegister() && !client->welcomeSent()) {
+        client->tryRegister();
+        sendWelcomeSequence(client);
+        client->setWelcomeSent(true);
+        std::cout << "Client " << client->getFd() << " (" << client->getNickname() << ") registered successfully" << std::endl;
+    }
+}
+
+// Authentication commands
+void CommandHandlers::handlePass(Client* client, const std::vector<std::string>& params) {
+    if (params.empty()) {
+        sendErrorReply(client, IRC::ERR_NEEDMOREPARAMS, "PASS :Not enough parameters");
+        return;
+    }
+
+    if (client->isRegistered()) {
+        sendErrorReply(client, IRC::ERR_ALREADYREGISTRED, "You may not reregister");
+        return;
+    }
+
+    const std::string& password = params[0];
+    if (password != _server->getPassword()) {
+        sendErrorReply(client, IRC::ERR_PASSWDMISMATCH, "Password incorrect");
+        return;
+    }
+
+    client->setReceivedPass(true);
+    checkRegistration(client);
+    std::cout << "PASS accepted from client " << client->getFd() << std::endl;
+}
+
+void CommandHandlers::handleNick(Client* client, const std::vector<std::string>& params) {
+    if (params.empty()) {
+        sendErrorReply(client, IRC::ERR_NONICKNAMEGIVEN, "No nickname given");
+        return;
+    }
+
+    const std::string& nickname = params[0];
+
+    if (!validateNickname(nickname)) {
+        sendErrorReply(client, IRC::ERR_ERRONEUSNICKNAME, nickname + " :Erroneous nickname");
+        return;
+    }
+
+    if (_server->isNicknameInUse(nickname)) {
+        sendErrorReply(client, IRC::ERR_NICKNAMEINUSE, nickname + " :Nickname is already in use");
+        return;
+    }
+
+    std::string oldNick = client->getNickname();
+    client->setNickname(nickname);
+    client->setReceivedNick(true);
+    
+    // If already registered, send nick change notification to channels
+    if (client->isRegistered() && !oldNick.empty()) {
+        std::vector<Channel*> channels = _server->getClientChannels(client);
+        std::string nickMsg = ":" + oldNick + "!" + client->getUsername() + "@" + client->getHostname() + " NICK :" + nickname + "\r\n";
+        
+        for (std::vector<Channel*>::iterator it = channels.begin(); it != channels.end(); ++it) {
+            (*it)->broadcast(nickMsg, NULL); // Send to all including the client
+        }
+    }
+    
+    checkRegistration(client);
+    std::cout << "Client " << client->getFd() << " set nickname to " << nickname << std::endl;
+}
+
+void CommandHandlers::handleUser(Client* client, const std::vector<std::string>& params) {
+    if (client->isRegistered()) {
+        sendErrorReply(client, IRC::ERR_ALREADYREGISTRED, "You may not reregister");
+        return;
+    }
+
+    if (params.size() < 4) {
+        sendErrorReply(client, IRC::ERR_NEEDMOREPARAMS, "USER :Not enough parameters");
+        return;
+    }
+
+    client->setUsername(params[0]);
+    client->setRealname(params[3]);
+    client->setReceivedUser(true);
+    
+    checkRegistration(client);
+    std::cout << "Client " << client->getFd() << " registered with username: " << params[0] << std::endl;
+}
+
+// Keepalive commands
+void CommandHandlers::handlePing(Client* client, const std::vector<std::string>& params) {
+    std::string token = params.empty() ? "ircserv" : params[0];
+    std::string pong = ":" + std::string("ircserv") + " PONG ircserv :" + token + "\r\n";
+    _server->queueMessage(client->getFd(), pong);
+}
+
+void CommandHandlers::handlePong(Client* client, const std::vector<std::string>& params) {
+    (void)params;
+    client->updateLastActive();
+}
+
+// Communication commands
+void CommandHandlers::handleJoin(Client* client, const std::vector<std::string>& params) {
+    if (!client->isRegistered()) {
+        sendErrorReply(client, IRC::ERR_NOTREGISTERED, "You have not registered");
+        return;
+    }
+
+    if (params.empty()) {
+        sendErrorReply(client, IRC::ERR_NEEDMOREPARAMS, "JOIN :Not enough parameters");
+        return;
+    }
+
+    const std::string& channelName = params[0];
+    std::string channelKey = (params.size() > 1) ? params[1] : "";
+
+    if (!validateChannelName(channelName)) {
+        sendErrorReply(client, IRC::ERR_NOSUCHCHANNEL, channelName + " :No such channel");
+        return;
+    }
+
+    Channel* channel = _server->getChannel(channelName);
+    if (!channel) {
+        channel = _server->createChannel(channelName);
+        // Make the first client an operator
+        channel->addOperator(client);
+    } else {
+        // Check channel restrictions
+        if (channel->isInviteOnly() && !channel->isInvited(client)) {
+            sendErrorReply(client, IRC::ERR_INVITEONLYCHAN, channelName + " :Cannot join channel (+i)");
+            return;
+        }
+
+        if (channel->getUserLimit() > 0 && channel->getMembers().size() >= channel->getUserLimit()) {
+            sendErrorReply(client, IRC::ERR_CHANNELISFULL, channelName + " :Cannot join channel (+l)");
+            return;
+        }
+
+        if (!channel->getKey().empty()) {
+            if (channelKey != channel->getKey()) {
+                sendErrorReply(client, IRC::ERR_BADCHANNELKEY, channelName + " :Cannot join channel (+k)");
+                return;
+            }
+        }
+    }
+
+    channel->addClient(client);
+
+    // Remove from invite list once joined (invite consumed)
+    if (channel->isInvited(client)) {
+        channel->removeInvite(client);
+    }
+
+    // Send JOIN confirmation to all channel members
+    std::string joinMsg = ":" + client->getHostmask() + " JOIN :" + channelName + "\r\n";
+    channel->broadcast(joinMsg, NULL); // Broadcast to all including sender
+
+    // Send topic information to the joining client
+    const std::string& topic = channel->getTopic();
+    if (topic.empty()) {
+        std::string noTopicReply = ":" + std::string("ircserv") + " " + IRC::RPL_NOTOPIC + " " + client->getNickname() + " " + channelName + " :No topic is set\r\n";
+        _server->queueMessage(client->getFd(), noTopicReply);
+    } else {
+        std::string topicReply = ":" + std::string("ircserv") + " " + IRC::RPL_TOPIC + " " + client->getNickname() + " " + channelName + " :" + topic + "\r\n";
+        _server->queueMessage(client->getFd(), topicReply);
+    }
+
+    // Send NAMES list to the joining client
+    std::string namesList = "";
+    const std::set<Client*>& members = channel->getMembers();
+    for (std::set<Client*>::const_iterator it = members.begin(); it != members.end(); ++it) {
+        if (!namesList.empty()) namesList += " ";
+        if (channel->isOperator(*it)) {
+            namesList += "@" + (*it)->getNickname();
+        } else {
+            namesList += (*it)->getNickname();
+        }
+    }
+    
+    std::string namesReply = ":" + std::string("ircserv") + " " + IRC::RPL_NAMREPLY + " " + client->getNickname() + " = " + channelName + " :" + namesList + "\r\n";
+    _server->queueMessage(client->getFd(), namesReply);
+    
+    std::string endNamesReply = ":" + std::string("ircserv") + " " + IRC::RPL_ENDOFNAMES + " " + client->getNickname() + " " + channelName + " :End of /NAMES list\r\n";
+    _server->queueMessage(client->getFd(), endNamesReply);
+}
+
+void CommandHandlers::handlePrivmsg(Client* client, const std::vector<std::string>& params) {
+    if (!client->isRegistered()) {
+        sendErrorReply(client, IRC::ERR_NOTREGISTERED, "You have not registered");
+        return;
+    }
+
+    if (params.empty()) {
+        sendErrorReply(client, IRC::ERR_NORECIPIENT, ":No recipient given (PRIVMSG)");
+        return;
+    }
+
+    const std::string& target = params[0];
+    std::string message = (params.size() > 1) ? params[1] : "";
+    if (message.empty()) {
+        sendErrorReply(client, IRC::ERR_NOTEXTTOSEND, ":No text to send");
+        return;
+    }
+
+    if (target[0] == '#') {
+        // Channel message
+        Channel* channel = _server->getChannel(target);
+        if (!channel) {
+            sendErrorReply(client, IRC::ERR_NOSUCHCHANNEL, target + " :No such channel");
+            return;
+        }
+
+        if (!channel->hasClient(client)) {
+            sendErrorReply(client, IRC::ERR_NOTONCHANNEL, target + " :You're not on that channel");
+            return;
+        }
+
+        std::string privmsg = ":" + client->getHostmask() + " PRIVMSG " + target + " :" + message + "\r\n";
+        channel->broadcast(privmsg, client); // Don't send back to sender
+    } else {
+        // Private message to user
+        Client* targetClient = _server->findClientByNick(target);
+        if (!targetClient) {
+            sendErrorReply(client, IRC::ERR_NOSUCHNICK, target + " :No such nick/channel");
+            return;
+        }
+
+        std::string privmsg = ":" + client->getHostmask() + " PRIVMSG " + target + " :" + message + "\r\n";
+        _server->queueMessage(targetClient->getFd(), privmsg);
+    }
+}
+
+void CommandHandlers::handleNotice(Client* client, const std::vector<std::string>& params) {
+    if (!client->isRegistered()) {
+        return; // NOTICE doesn't send error replies
+    }
+
+    if (params.size() < 2) {
+        return; // NOTICE doesn't send error replies
+    }
+
+    const std::string& target = params[0];
+    const std::string& message = params[1];
+
+    if (target[0] == '#') {
+        // Channel notice
+        Channel* channel = _server->getChannel(target);
+        if (!channel || !channel->hasClient(client)) {
+            return; // NOTICE doesn't send error replies
+        }
+
+        std::string noticeMsg = ":" + client->getHostmask() + " NOTICE " + target + " :" + message + "\r\n";
+        channel->broadcast(noticeMsg, client);
+    } else {
+        // Private notice to user
+        Client* targetClient = _server->findClientByNick(target);
+        if (!targetClient) {
+            return; // NOTICE doesn't send error replies
+        }
+
+        std::string noticeMsg = ":" + client->getHostmask() + " NOTICE " + target + " :" + message + "\r\n";
+        _server->queueMessage(targetClient->getFd(), noticeMsg);
+    }
+}
+
+void CommandHandlers::handlePart(Client* client, const std::vector<std::string>& params) {
+    if (!client->isRegistered()) {
+        sendErrorReply(client, IRC::ERR_NOTREGISTERED, "You have not registered");
+        return;
+    }
+
+    if (params.empty()) {
+        sendErrorReply(client, IRC::ERR_NEEDMOREPARAMS, "PART :Not enough parameters");
+        return;
+    }
+
+    const std::string& channelName = params[0];
+    std::string partMessage = (params.size() > 1) ? params[1] : "";
+
+    if (!validateChannelName(channelName)) {
+        sendErrorReply(client, IRC::ERR_NOSUCHCHANNEL, channelName + " :No such channel");
+        return;
+    }
+
+    Channel* channel = _server->getChannel(channelName);
+    if (!channel) {
+        sendErrorReply(client, IRC::ERR_NOSUCHCHANNEL, channelName + " :No such channel");
+        return;
+    }
+
+    if (!channel->hasClient(client)) {
+        sendErrorReply(client, IRC::ERR_NOTONCHANNEL, channelName + " :You're not on that channel");
+        return;
+    }
+
+    // Send PART message to all channel members (including sender)
+    std::string partMsg = ":" + client->getHostmask() + " PART " + channelName;
+    if (!partMessage.empty()) {
+        partMsg += " :" + partMessage;
+    }
+    partMsg += "\r\n";
+    
+    channel->broadcast(partMsg, NULL); // Send to all including sender
+
+    // Remove client from channel
+    channel->removeClient(client);
+
+    // Delete channel if empty
+    _server->deleteChannelIfEmpty(channel);
+}
+
+void CommandHandlers::handleQuit(Client* client, const std::vector<std::string>& params) {
+    std::string quitMessage = params.empty() ? "Client Quit" : params[0];
+
+    // Send QUIT message to all channels the client is in
+    std::vector<Channel*> channelsWithClient = _server->getClientChannels(client);
+    std::string quitMsg = ":" + client->getHostmask() + " QUIT :" + quitMessage + "\r\n";
+
+    for (std::vector<Channel*>::iterator it = channelsWithClient.begin();
+         it != channelsWithClient.end(); ++it) {
+        (*it)->broadcast(quitMsg, client); // Don't send to the quitting client
+    }
+
+    // Remove client from all channels
+    _server->removeClientFromAllChannels(client);
+}
+
+// Operator commands (simplified implementations)
+void CommandHandlers::handleKick(Client* client, const std::vector<std::string>& params) {
+    if (!client->isRegistered()) {
+        sendErrorReply(client, IRC::ERR_NOTREGISTERED, "You have not registered");
+        return;
+    }
+
+    if (params.size() < 2) {
+        sendErrorReply(client, IRC::ERR_NEEDMOREPARAMS, "KICK :Not enough parameters");
+        return;
+    }
+
+    const std::string& channelName = params[0];
+    const std::string& targetNick = params[1];
+    std::string kickReason = (params.size() > 2) ? params[2] : client->getNickname();
+
+    if (!validateChannelName(channelName)) {
+        sendErrorReply(client, IRC::ERR_NOSUCHCHANNEL, channelName + " :No such channel");
+        return;
+    }
+
+    Channel* channel = _server->getChannel(channelName);
+    if (!channel) {
+        sendErrorReply(client, IRC::ERR_NOSUCHCHANNEL, channelName + " :No such channel");
+        return;
+    }
+
+    if (!channel->hasClient(client)) {
+        sendErrorReply(client, IRC::ERR_NOTONCHANNEL, channelName + " :You're not on that channel");
+        return;
+    }
+
+    if (!channel->isOperator(client)) {
+        sendErrorReply(client, IRC::ERR_CHANOPRIVSNEEDED, channelName + " :You're not channel operator");
+        return;
+    }
+
+    Client* targetClient = _server->findClientByNick(targetNick);
+    if (!targetClient) {
+        sendErrorReply(client, IRC::ERR_NOSUCHNICK, targetNick + " :No such nick/channel");
+        return;
+    }
+
+    if (!channel->hasClient(targetClient)) {
+        sendErrorReply(client, IRC::ERR_USERNOTINCHANNEL, targetNick + " " + channelName + " :They aren't on that channel");
+        return;
+    }
+
+    // Send KICK message to all channel members
+    std::string kickMsg = ":" + client->getHostmask() + " KICK " + channelName + " " + targetNick + " :" + kickReason + "\r\n";
+    channel->broadcast(kickMsg, NULL);
+
+    // Remove target from channel
+    channel->removeClient(targetClient);
+
+    // Delete channel if empty
+    _server->deleteChannelIfEmpty(channel);
+}
+
+void CommandHandlers::handleInvite(Client* client, const std::vector<std::string>& params) {
+    if (!client->isRegistered()) {
+        sendErrorReply(client, IRC::ERR_NOTREGISTERED, "You have not registered");
+        return;
+    }
+
+    if (params.size() < 2) {
+        sendErrorReply(client, IRC::ERR_NEEDMOREPARAMS, "INVITE :Not enough parameters");
+        return;
+    }
+
+    const std::string& targetNick = params[0];
+    const std::string& channelName = params[1];
+
+    if (!validateChannelName(channelName)) {
+        sendErrorReply(client, IRC::ERR_NOSUCHCHANNEL, channelName + " :No such channel");
+        return;
+    }
+
+    Client* targetClient = _server->findClientByNick(targetNick);
+    if (!targetClient) {
+        sendErrorReply(client, IRC::ERR_NOSUCHNICK, targetNick + " :No such nick/channel");
+        return;
+    }
+
+    Channel* channel = _server->getChannel(channelName);
+    if (!channel) {
+        sendErrorReply(client, IRC::ERR_NOSUCHCHANNEL, channelName + " :No such channel");
+        return;
+    }
+
+    if (!channel->hasClient(client)) {
+        sendErrorReply(client, IRC::ERR_NOTONCHANNEL, channelName + " :You're not on that channel");
+        return;
+    }
+
+    if (!channel->isOperator(client)) {
+        sendErrorReply(client, IRC::ERR_CHANOPRIVSNEEDED, channelName + " :You're not channel operator");
+        return;
+    }
+
+    if (channel->hasClient(targetClient)) {
+        sendErrorReply(client, IRC::ERR_USERONCHANNEL, targetNick + " " + channelName + " :is already on channel");
+        return;
+    }
+
+    // Add target to invite list
+    channel->addInvite(targetClient);
+
+    // Send INVITE confirmation to inviter
+    std::string inviteReply = ":" + std::string("ircserv") + " 341 " + client->getNickname() + " " + targetNick + " " + channelName + "\r\n";
+    _server->queueMessage(client->getFd(), inviteReply);
+
+    // Send INVITE notification to target
+    std::string inviteMsg = ":" + client->getHostmask() + " INVITE " + targetNick + " :" + channelName + "\r\n";
+    _server->queueMessage(targetClient->getFd(), inviteMsg);
+}
+
+void CommandHandlers::handleTopic(Client* client, const std::vector<std::string>& params) {
+    if (!client->isRegistered()) {
+        sendErrorReply(client, IRC::ERR_NOTREGISTERED, "You have not registered");
+        return;
+    }
+
+    if (params.empty()) {
+        sendErrorReply(client, IRC::ERR_NEEDMOREPARAMS, "TOPIC :Not enough parameters");
+        return;
+    }
+
+    const std::string& channelName = params[0];
+
+    if (!validateChannelName(channelName)) {
+        sendErrorReply(client, IRC::ERR_NOSUCHCHANNEL, channelName + " :No such channel");
+        return;
+    }
+
+    Channel* channel = _server->getChannel(channelName);
+    if (!channel) {
+        sendErrorReply(client, IRC::ERR_NOSUCHCHANNEL, channelName + " :No such channel");
+        return;
+    }
+
+    if (!channel->hasClient(client)) {
+        sendErrorReply(client, IRC::ERR_NOTONCHANNEL, channelName + " :You're not on that channel");
+        return;
+    }
+
+    if (params.size() == 1) {
+        // View topic
+        const std::string& topic = channel->getTopic();
+        if (topic.empty()) {
+            std::string noTopicReply = ":" + std::string("ircserv") + " " + IRC::RPL_NOTOPIC + " " + client->getNickname() + " " + channelName + " :No topic is set\r\n";
+            _server->queueMessage(client->getFd(), noTopicReply);
+        } else {
+            std::string topicReply = ":" + std::string("ircserv") + " " + IRC::RPL_TOPIC + " " + client->getNickname() + " " + channelName + " :" + topic + "\r\n";
+            _server->queueMessage(client->getFd(), topicReply);
+        }
+    } else {
+        // Set topic - check if client has permission
+        if (channel->isTopicRestricted() && !channel->isOperator(client)) {
+            sendErrorReply(client, IRC::ERR_CHANOPRIVSNEEDED, channelName + " :You're not channel operator");
+            return;
+        }
+
+        const std::string& newTopic = params[1];
+        channel->setTopic(newTopic);
+
+        // Broadcast topic change to all channel members
+        std::string topicMsg = ":" + client->getHostmask() + " TOPIC " + channelName + " :" + newTopic + "\r\n";
+        channel->broadcast(topicMsg, NULL);
+    }
+}
+
+void CommandHandlers::handleMode(Client* client, const std::vector<std::string>& params) {
+    if (!client->isRegistered()) {
+        sendErrorReply(client, IRC::ERR_NOTREGISTERED, "You have not registered");
+        return;
+    }
+
+    if (params.empty()) {
+        sendErrorReply(client, IRC::ERR_NEEDMOREPARAMS, "MODE :Not enough parameters");
+        return;
+    }
+
+    const std::string& target = params[0];
+
+    // Only handle channel modes
+    if (target[0] != '#') {
+        sendErrorReply(client, IRC::ERR_UNKNOWNMODE, "User modes not supported");
+        return;
+    }
+
+    if (!validateChannelName(target)) {
+        sendErrorReply(client, IRC::ERR_NOSUCHCHANNEL, target + " :No such channel");
+        return;
+    }
+
+    Channel* channel = _server->getChannel(target);
+    if (!channel) {
+        sendErrorReply(client, IRC::ERR_NOSUCHCHANNEL, target + " :No such channel");
+        return;
+    }
+
+    if (!channel->hasClient(client)) {
+        sendErrorReply(client, IRC::ERR_NOTONCHANNEL, target + " :You're not on that channel");
+        return;
+    }
+
+    if (params.size() == 1) {
+        // Query mode - return current channel modes
+        std::string modeString = channel->getModeString();
+        if (modeString.empty()) modeString = "+";
+
+        std::string modeReply = ":" + std::string("ircserv") + " 324 " + client->getNickname() + " " + target + " " + modeString + "\r\n";
+        _server->queueMessage(client->getFd(), modeReply);
+        return;
+    }
+
+    // Setting modes - check if client is operator
+    if (!channel->isOperator(client)) {
+        sendErrorReply(client, IRC::ERR_CHANOPRIVSNEEDED, target + " :You're not channel operator");
+        return;
+    }
+
+    const std::string& modeString = params[1];
+    std::vector<std::string> modeParams;
+    for (size_t i = 2; i < params.size(); ++i) {
+        modeParams.push_back(params[i]);
+    }
+
+    // Parse and apply modes (simplified)
+    bool adding = true;
+    size_t paramIndex = 0;
+    std::string appliedModes = "";
+    std::string appliedParams = "";
+
+    for (size_t i = 0; i < modeString.length(); ++i) {
+        char mode = modeString[i];
+
+        if (mode == '+') {
+            adding = true;
+            continue;
+        }
+        if (mode == '-') {
+            adding = false;
+            continue;
+        }
+
+        switch (mode) {
+            case 'i': // Invite only
+                channel->setInviteOnly(adding);
+                if (appliedModes.empty() || appliedModes[appliedModes.length() - 1] != (adding ? '+' : '-')) {
+                    appliedModes += (adding ? '+' : '-');
+                }
+                appliedModes += "i";
+                break;
+
+            case 't': // Topic restricted
+                channel->setTopicRestricted(adding);
+                if (appliedModes.empty() || appliedModes[appliedModes.length() - 1] != (adding ? '+' : '-')) {
+                    appliedModes += (adding ? '+' : '-');
+                }
+                appliedModes += "t";
+                break;
+
+            case 'k': // Channel key
+                if (adding && paramIndex < modeParams.size()) {
+                    channel->setKey(modeParams[paramIndex]);
+                    if (appliedModes.empty() || appliedModes[appliedModes.length() - 1] != '+') {
+                        appliedModes += "+";
+                    }
+                    appliedModes += "k";
+                    appliedParams += " " + modeParams[paramIndex];
+                    paramIndex++;
+                } else if (!adding) {
+                    channel->setKey("");
+                    if (appliedModes.empty() || appliedModes[appliedModes.length() - 1] != '-') {
+                        appliedModes += "-";
+                    }
+                    appliedModes += "k";
+                }
+                break;
+
+            case 'l': // User limit
+                if (adding && paramIndex < modeParams.size()) {
+                    size_t limit = static_cast<size_t>(std::atoi(modeParams[paramIndex].c_str()));
+                    if (limit > 0) {
+                        channel->setUserLimit(limit);
+                        if (appliedModes.empty() || appliedModes[appliedModes.length() - 1] != '+') {
+                            appliedModes += "+";
+                        }
+                        appliedModes += "l";
+                        appliedParams += " " + modeParams[paramIndex];
+                    }
+                    paramIndex++;
+                } else if (!adding) {
+                    channel->setUserLimit(0);
+                    if (appliedModes.empty() || appliedModes[appliedModes.length() - 1] != '-') {
+                        appliedModes += "-";
+                    }
+                    appliedModes += "l";
+                }
+                break;
+
+            case 'o': // Operator privilege
+                if (paramIndex < modeParams.size()) {
+                    Client* targetClient = _server->findClientByNick(modeParams[paramIndex]);
+                    if (targetClient && channel->hasClient(targetClient)) {
+                        if (adding) {
+                            channel->addOperator(targetClient);
+                        } else {
+                            channel->removeOperator(targetClient);
+                        }
+                        if (appliedModes.empty() || appliedModes[appliedModes.length() - 1] != (adding ? '+' : '-')) {
+                            appliedModes += (adding ? '+' : '-');
+                        }
+                        appliedModes += "o";
+                        appliedParams += " " + modeParams[paramIndex];
+                    }
+                    paramIndex++;
+                }
+                break;
+
+            default:
+                sendErrorReply(client, IRC::ERR_UNKNOWNMODE, std::string(1, mode) + " :is unknown mode char to me");
+                return;
+        }
+    }
+
+    // Broadcast mode change to all channel members
+    if (!appliedModes.empty()) {
+        std::string modeMsg = ":" + client->getHostmask() + " MODE " + target + " " + appliedModes + appliedParams + "\r\n";
+        channel->broadcast(modeMsg, NULL);
+    }
+}
+
+// Information commands
+void CommandHandlers::handleCap(Client* client, const std::vector<std::string>& params) {
+    if (params.empty()) {
+        return;
+    }
+    
+    const std::string& subcommand = params[0];
+    std::string nick = client->getNickname().empty() ? "*" : client->getNickname();
+    
+    if (subcommand == "LS") {
+        std::string capReply = ":" + std::string("ircserv") + " CAP " + nick + " LS :\r\n";
+        _server->queueMessage(client->getFd(), capReply);
+    } else if (subcommand == "REQ") {
+        std::string capReply = ":" + std::string("ircserv") + " CAP " + nick + " NAK :\r\n";
+        _server->queueMessage(client->getFd(), capReply);
+    } else if (subcommand == "END") {
+        // CAP negotiation finished
+    }
+}
+
+void CommandHandlers::handleWho(Client* client, const std::vector<std::string>& params) {
+    if (!client->isRegistered()) {
+        sendErrorReply(client, IRC::ERR_NOTREGISTERED, "You have not registered");
+        return;
+    }
+    
+    std::string target = params.empty() ? "*" : params[0];
+    std::string nick = client->getNickname();
+    
+    if (target.empty() || target == "*") {
+        std::string endReply = ":" + std::string("ircserv") + " " + IRC::RPL_ENDOFWHO + " " + nick + " * :End of WHO list\r\n";
+        _server->queueMessage(client->getFd(), endReply);
+        return;
+    }
+    
+    if (target[0] == '#') {
+        Channel* channel = _server->getChannel(target);
+        if (channel) {
+            const std::set<Client*>& members = channel->getMembers();
+            for (std::set<Client*>::const_iterator it = members.begin(); it != members.end(); ++it) {
+                Client* member = *it;
+                std::string flags = "H";
+                if (channel->isOperator(member)) flags += "@";
+                
+                std::string whoReply = ":" + std::string("ircserv") + " " + IRC::RPL_WHOREPLY + " " + nick + " " + target + " " + 
+                                     member->getUsername() + " " + member->getHostname() + " ircserv " + 
+                                     member->getNickname() + " " + flags + " :0 " + member->getRealname() + "\r\n";
+                _server->queueMessage(client->getFd(), whoReply);
+            }
+        }
+    }
+    
+    std::string endReply = ":" + std::string("ircserv") + " " + IRC::RPL_ENDOFWHO + " " + nick + " " + target + " :End of WHO list\r\n";
+    _server->queueMessage(client->getFd(), endReply);
+}
+
+void CommandHandlers::handleWhois(Client* client, const std::vector<std::string>& params) {
+    if (!client->isRegistered()) {
+        sendErrorReply(client, IRC::ERR_NOTREGISTERED, "You have not registered");
+        return;
+    }
+    
+    if (params.empty()) {
+        sendErrorReply(client, IRC::ERR_NONICKNAMEGIVEN, "No nickname given");
+        return;
+    }
+    
+    const std::string& targetNick = params[0];
+    Client* target = _server->findClientByNick(targetNick);
+    
+    if (!target) {
+        sendErrorReply(client, IRC::ERR_NOSUCHNICK, targetNick + " :No such nick/channel");
+        std::string endReply = ":" + std::string("ircserv") + " " + IRC::RPL_ENDOFWHOIS + " " + client->getNickname() + " " + targetNick + " :End of WHOIS list\r\n";
+        _server->queueMessage(client->getFd(), endReply);
+        return;
+    }
+    
+    std::string nick = client->getNickname();
+    
+    // RPL_WHOISUSER
+    std::string userReply = ":" + std::string("ircserv") + " " + IRC::RPL_WHOISUSER + " " + nick + " " + targetNick + " " + 
+                           target->getUsername() + " " + target->getHostname() + " * :" + target->getRealname() + "\r\n";
+    _server->queueMessage(client->getFd(), userReply);
+    
+    // RPL_WHOISSERVER
+    std::string serverReply = ":" + std::string("ircserv") + " " + IRC::RPL_WHOISSERVER + " " + nick + " " + targetNick + " ircserv :IRC Server\r\n";
+    _server->queueMessage(client->getFd(), serverReply);
+    
+    // RPL_WHOISCHANNELS
+    std::vector<Channel*> channels = _server->getClientChannels(target);
+    if (!channels.empty()) {
+        std::string channelList;
+        for (std::vector<Channel*>::iterator it = channels.begin(); it != channels.end(); ++it) {
+            if (!channelList.empty()) channelList += " ";
+            if ((*it)->isOperator(target)) channelList += "@";
+            channelList += (*it)->getName();
+        }
+        std::string channelsReply = ":" + std::string("ircserv") + " " + IRC::RPL_WHOISCHANNELS + " " + nick + " " + targetNick + " :" + channelList + "\r\n";
+        _server->queueMessage(client->getFd(), channelsReply);
+    }
+    
+    // RPL_ENDOFWHOIS
+    std::string endReply = ":" + std::string("ircserv") + " " + IRC::RPL_ENDOFWHOIS + " " + nick + " " + targetNick + " :End of WHOIS list\r\n";
+    _server->queueMessage(client->getFd(), endReply);
+}
+
+void CommandHandlers::handleList(Client* client, const std::vector<std::string>& params) {
+    if (!client->isRegistered()) {
+        sendErrorReply(client, IRC::ERR_NOTREGISTERED, "You have not registered");
+        return;
+    }
+    
+    (void)params; // Unused for now
+    std::string nick = client->getNickname();
+    
+    // RPL_LISTSTART
+    std::string startReply = ":" + std::string("ircserv") + " " + IRC::RPL_LISTSTART + " " + nick + " Channel :Users Name\r\n";
+    _server->queueMessage(client->getFd(), startReply);
+    
+    // RPL_LISTEND
+    std::string endReply = ":" + std::string("ircserv") + " " + IRC::RPL_LISTEND + " " + nick + " :End of LIST\r\n";
+    _server->queueMessage(client->getFd(), endReply);
+}
+
+void CommandHandlers::handleNames(Client* client, const std::vector<std::string>& params) {
+    if (!client->isRegistered()) {
+        sendErrorReply(client, IRC::ERR_NOTREGISTERED, "You have not registered");
+        return;
+    }
+    
+    std::string nick = client->getNickname();
+    
+    if (params.empty()) {
+        std::string endReply = ":" + std::string("ircserv") + " " + IRC::RPL_ENDOFNAMES + " " + nick + " * :End of NAMES list\r\n";
+        _server->queueMessage(client->getFd(), endReply);
+        return;
+    }
+    
+    const std::string& channelName = params[0];
+    Channel* channel = _server->getChannel(channelName);
+    
+    if (channel) {
+        std::string namesList;
+        const std::set<Client*>& members = channel->getMembers();
+        for (std::set<Client*>::const_iterator it = members.begin(); it != members.end(); ++it) {
+            if (!namesList.empty()) namesList += " ";
+            if (channel->isOperator(*it)) namesList += "@";
+            namesList += (*it)->getNickname();
+        }
+        
+        if (!namesList.empty()) {
+            std::string namesReply = ":" + std::string("ircserv") + " " + IRC::RPL_NAMREPLY + " " + nick + " = " + channelName + " :" + namesList + "\r\n";
+            _server->queueMessage(client->getFd(), namesReply);
+        }
+    }
+    
+    std::string endReply = ":" + std::string("ircserv") + " " + IRC::RPL_ENDOFNAMES + " " + nick + " " + channelName + " :End of NAMES list\r\n";
+    _server->queueMessage(client->getFd(), endReply);
+}
+
+// Utility functions
+void CommandHandlers::sendWelcomeSequence(Client* client) {
+    std::string nick = client->getNickname();
+    std::string hostname = client->getHostname();
+    
+    std::string welcome = ":" + std::string("ircserv") + " " + IRC::RPL_WELCOME + " " + nick + " :Welcome to the IRC Network " + client->getHostmask() + "\r\n";
+    _server->queueMessage(client->getFd(), welcome);
+    
+    std::string yourhost = ":" + std::string("ircserv") + " " + IRC::RPL_YOURHOST + " " + nick + " :Your host is ircserv, running version 1.0\r\n";
+    _server->queueMessage(client->getFd(), yourhost);
+    
+    std::string created = ":" + std::string("ircserv") + " " + IRC::RPL_CREATED + " " + nick + " :This server was created today\r\n";
+    _server->queueMessage(client->getFd(), created);
+    
+    std::string myinfo = ":" + std::string("ircserv") + " " + IRC::RPL_MYINFO + " " + nick + " ircserv 1.0 o o\r\n";
+    _server->queueMessage(client->getFd(), myinfo);
+    
+    // ISUPPORT
+    std::string isupport = ":" + std::string("ircserv") + " 005 " + nick + " CHANTYPES=# PREFIX=(o)@ CASEMAPPING=rfc1459 :are supported by this server\r\n";
+    _server->queueMessage(client->getFd(), isupport);
+}
+
+void CommandHandlers::sendErrorReply(Client* client, const std::string& code, const std::string& message) {
+    std::string nick = client->getNickname().empty() ? "*" : client->getNickname();
+    std::string reply = ":" + std::string("ircserv") + " " + code + " " + nick + " " + message + "\r\n";
+    _server->queueMessage(client->getFd(), reply);
+}
+
+bool CommandHandlers::validateNickname(const std::string& nickname) {
+    if (nickname.empty() || nickname.length() > 9) {
+        return false;
+    }
+
+    char first = nickname[0];
+    if (!std::isalpha(first) && first != '[' && first != ']' && first != '\\' &&
+        first != '`' && first != '_' && first != '^' && first != '{' && first != '}') {
+        return false;
+    }
+
+    for (size_t i = 1; i < nickname.length(); ++i) {
+        char c = nickname[i];
+        if (!std::isalnum(c) && c != '[' && c != ']' && c != '\\' &&
+            c != '`' && c != '_' && c != '^' && c != '{' && c != '}' && c != '-') {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool CommandHandlers::validateChannelName(const std::string& channel) {
+    if (channel.empty() || channel[0] != '#' || channel.length() > 50) {
+        return false;
+    }
+
+    for (size_t i = 1; i < channel.length(); ++i) {
+        char c = channel[i];
+        if (c == ' ' || c == ',' || c == '\r' || c == '\n' || c == '\0') {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+============================================================
+FILE: srcs/IRCProtocol.cpp
+============================================================
+#include "IRCProtocol.hpp"
+#include <sstream>
+
+std::string formatIRCMessage(const std::string& prefix, const std::string& command, 
+                             const std::string& target, const std::string& message) {
+    std::ostringstream oss;
+    
+    if (!prefix.empty()) {
+        oss << ":" << prefix << " ";
+    }
+    
+    oss << command;
+    
+    if (!target.empty()) {
+        oss << " " << target;
+    }
+    
+    if (!message.empty()) {
+        oss << " :" << message;
+    }
+    
+    oss << "\r\n";
+    return oss.str();
+}
+
+// std::string formatNumericReply(const std::string& code, const std::string& target, 
+//                               const std::string& message) {
+//     std::ostringstream oss;
+//     oss << ":" << "localhost" << " " << code << " " << target << " :" << message << "\r\n";
+//     return oss.str();
+// }
+std::string formatNumericReply(const std::string& code, const std::string& target, 
+                              const std::string& message) {
+    std::ostringstream oss;
+    oss << ":" << "ircserv" << " " << code << " " << target << " :" << message << "\r\n";
+    return oss.str();
+}
+
+============================================================
+FILE: srcs/Server.cpp
+============================================================
+#include "Server.hpp"
+#include <iostream>
+#include <ctime>
+#include <unistd.h>
+
+// Constructor/Destructor
+Server::Server() {}
+
+Server::Server(const std::string& password) : _password(password) {}
+
+Server::~Server() {
+    for (std::map<int, Client*>::iterator it = _clients.begin(); it != _clients.end(); ++it)
+        delete it->second;
+    for (std::map<std::string, Channel*>::iterator it = _channels.begin(); it != _channels.end(); ++it)
+        delete it->second;
+}
+
+// Configuration
+void Server::setPassword(const std::string& password) {
+    _password = password;
+}
+
+const std::string& Server::getPassword() const {
+    return _password;
+}
+
+// -------- CLIENT METHODS --------
+
+void Server::addClient(int fd) {
+    if (_clients.find(fd) == _clients.end())
+        _clients[fd] = new Client(fd);
+}
+
+void Server::removeClient(int fd) {
+    std::map<int, Client*>::iterator it = _clients.find(fd);
+    if (it != _clients.end()) {
+        removeClientFromAllChannels(it->second);
+        delete it->second;
+        _clients.erase(it);
+    }
+}
+
+Client* Server::getClient(int fd) {
+    std::map<int, Client*>::iterator it = _clients.find(fd);
+    return (it != _clients.end()) ? it->second : NULL;
+}
+
+Client* Server::findClientByNick(const std::string& nickname) {
+    for (std::map<int, Client*>::iterator it = _clients.begin(); it != _clients.end(); ++it) {
+        if (it->second->getNickname() == nickname)
+            return it->second;
+    }
+    return NULL;
+}
+
+bool Server::isNicknameInUse(const std::string& nickname) {
+    return findClientByNick(nickname) != NULL;
+}
+
+// -------- CHANNEL METHODS --------
+
+Channel* Server::getChannel(const std::string& name) {
+    std::map<std::string, Channel*>::iterator it = _channels.find(name);
+    return (it != _channels.end()) ? it->second : NULL;
+}
+
+Channel* Server::createChannel(const std::string& name) {
+    if (_channels.find(name) == _channels.end())
+        _channels[name] = new Channel(name);
+    return _channels[name];
+}
+
+void Server::removeClientFromAllChannels(Client* client) {
+    std::vector<Channel*> channelsToCheck;
+
+    // First, collect all channels that have this client
+    for (std::map<std::string, Channel*>::iterator it = _channels.begin(); it != _channels.end(); ++it) {
+        if (it->second->hasClient(client)) {
+            channelsToCheck.push_back(it->second);
+        }
+    }
+
+    // Then remove the client from each channel and check if empty
+    for (std::vector<Channel*>::iterator it = channelsToCheck.begin(); it != channelsToCheck.end(); ++it) {
+        (*it)->removeClient(client);
+        deleteChannelIfEmpty(*it);
+    }
+}
+
+void Server::deleteChannelIfEmpty(Channel* channel) {
+    if (!channel)
+        return;
+
+    // Check if it's in the map
+    std::map<std::string, Channel*>::iterator it = _channels.find(channel->getName());
+    if (it == _channels.end())
+        return;
+
+    // If no members, delete and erase
+    if (channel->getMembers().empty()) {
+        delete channel;
+        _channels.erase(it);
+    }
+}
+
+// -------- MESSAGING --------
+
+void Server::queueMessage(int clientFd, const std::string& message) {
+    Client* client = getClient(clientFd);
+    if (client)
+        client->enqueueMessage(message);
+}
+
+void Server::sendMessage(int clientFd, const std::string& message) {
+    queueMessage(clientFd, message);
+}
+
+void Server::broadcast(const std::set<int>& targets, const std::string& message) {
+    for (std::set<int>::const_iterator it = targets.begin(); it != targets.end(); ++it) {
+        queueMessage(*it, message);
+    }
+}
+
+// -------- I/O INTERFACE METHODS --------
+
+void Server::flushClientMessages(int clientFd) {
+    Client* client = getClient(clientFd);
+    if (client) {
+        client->flushMessagesToOutputBuffer();
+    }
+}
+
+bool Server::hasClientMessagesToSend(int clientFd) const {
+    Client* client = const_cast<Server*>(this)->getClient(clientFd);
+    return client ? client->hasMessagesToSend() : false;
+}
+
+// -------- TIMEOUT HANDLING --------
+
+void Server::disconnectIdleClients(int timeoutSeconds) {
+    std::vector<int> clientsToDisconnect;
+    time_t currentTime = time(NULL);
+
+    for (std::map<int, Client*>::iterator it = _clients.begin(); it != _clients.end(); ++it) {
+        if (currentTime - it->second->getLastActive() > timeoutSeconds) {
+            clientsToDisconnect.push_back(it->first);
+        }
+    }
+
+    for (std::vector<int>::iterator it = clientsToDisconnect.begin(); it != clientsToDisconnect.end(); ++it) {
+        int fd = *it;
+        Client* client = getClient(fd);
+        if (client && client->isRegistered()) {
+            // Broadcast QUIT to channels to inform peers
+            std::vector<Channel*> chans = getClientChannels(client);
+            std::string quitMsg = ":" + client->getHostmask() + " QUIT :Ping timeout" + "\r\n";
+            for (std::vector<Channel*>::iterator cit = chans.begin(); cit != chans.end(); ++cit) {
+                (*cit)->broadcast(quitMsg, client);
+            }
+        }
+        std::cout << "Disconnecting idle client: fd=" << fd << std::endl;
+        close(fd);
+        removeClient(fd);
+    }
+}
+
+// -------- CHANNEL UTILITIES --------
+
+std::vector<Channel*> Server::getClientChannels(Client* client) {
+    std::vector<Channel*> clientChannels;
+    
+    for (std::map<std::string, Channel*>::iterator it = _channels.begin(); it != _channels.end(); ++it) {
+        if (it->second->hasClient(client)) {
+            clientChannels.push_back(it->second);
+        }
+    }
+    
+    return clientChannels;
+}
+
+
+============================================================
+FILE: srcs/utils.cpp
+============================================================
+#include "utils.hpp"
+#include <sstream>
+
+namespace IRCUtils {
+    std::vector<std::string> extractLines(std::string& buffer) {
+        std::vector<std::string> lines;
+        size_t pos = 0;
+
+        while ((pos = buffer.find("\r\n")) != std::string::npos) {
+            lines.push_back(buffer.substr(0, pos));
+            buffer.erase(0, pos + 2);
+        }
+
+        return lines;
+    }
+
+    IRCMessage parseIRCMessage(const std::string& line) {
+        IRCMessage msg;
+        std::istringstream iss(line);
+        std::string token;
+
+        // Check for prefix
+        if (line[0] == ':') {
+            iss >> msg.prefix;
+            msg.prefix = msg.prefix.substr(1); // Remove the ':'
+        }
+
+        // Get command
+        iss >> msg.command;
+
+        // Get parameters
+        std::string param;
+        while (iss >> param) {
+            if (param[0] == ':') {
+                // Trailing parameter - collect rest of line
+                std::string trailing = param.substr(1);
+                std::string rest;
+                std::getline(iss, rest);
+                if (!rest.empty()) {
+                    trailing += rest;
+                }
+                msg.params.push_back(trailing);
+                break;
+            } else {
+                msg.params.push_back(param);
+            }
+        }
+
+        return msg;
+    }
+
+    std::string formatReply(int code, const std::string& target, const std::string& message) {
+        std::ostringstream oss;
+        oss << ":" << "irc.server.local" << " ";
+
+        if (code < 100) oss << "0";
+        if (code < 10) oss << "0";
+        oss << code << " " << target << " " << message;
+
+        return oss.str();
+    }
+}
+
+
+============================================================
+FILE: main.cpp
+============================================================
+#include <iostream>
+#include <cstdlib>
+#include <cstdio>
+#include <csignal>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <poll.h>
+#include <vector>
+#include <cstring>
+#include <cerrno>
+#include <ctime>
+#include "Server.hpp"
+#include "Command.hpp"
+#include "utils.hpp"
+
+// Global variables for signal handling
+volatile sig_atomic_t g_shutdown = 0;
+Server* g_server = NULL;
+Command* g_commandProcessor = NULL;
+
+void signalHandler(int signal) {
+    if (signal == SIGINT) {
+        std::cout << "\nReceived SIGINT, shutting down gracefully..." << std::endl;
+        g_shutdown = 1;
+    }
+}
+
+void setupSignalHandling() {
+    struct sigaction sa;
+    sa.sa_handler = signalHandler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+
+    if (sigaction(SIGINT, &sa, NULL) == -1) {
+        perror("sigaction");
+        exit(1);
+    }
+}
+
+int createListeningSocket(int port) {
+    int serverFd = socket(AF_INET, SOCK_STREAM, 0);
+    if (serverFd == -1) {
+        perror("socket");
+        return -1;
+    }
+
+    // Set SO_REUSEADDR
+    int opt = 1;
+    if (setsockopt(serverFd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1) {
+        perror("setsockopt SO_REUSEADDR");
+        close(serverFd);
+        return -1;
+    }
+
+    // Set non-blocking
+    if (fcntl(serverFd, F_SETFL, O_NONBLOCK) == -1) {
+        perror("fcntl O_NONBLOCK");
+        close(serverFd);
+        return -1;
+    }
+
+    // Bind
+    struct sockaddr_in serverAddr;
+    std::memset(&serverAddr, 0, sizeof(serverAddr));
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_addr.s_addr = INADDR_ANY;
+    serverAddr.sin_port = htons(port);
+
+    if (bind(serverFd, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) == -1) {
+        perror("bind");
+        close(serverFd);
+        return -1;
+    }
+
+    // Listen
+    if (listen(serverFd, SOMAXCONN) == -1) {
+        perror("listen");
+        close(serverFd);
+        return -1;
+    }
+
+    std::cout << "Server is listening on port " << port << std::endl;
+    return serverFd;
+}
+
+void handleNewConnection(int serverFd, Server& server, std::vector<pollfd>& pollFds) {
+    struct sockaddr_in clientAddr;
+    socklen_t clientAddrLen = sizeof(clientAddr);
+
+    // Accept all available connections
+    while (true) {
+        int clientFd = accept(serverFd, (struct sockaddr*)&clientAddr, &clientAddrLen);
+
+        if (clientFd == -1) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // No more connections to accept
+                break;
+            } else {
+                perror("accept");
+                break;
+            }
+        }
+
+        // Set client socket non-blocking
+        if (fcntl(clientFd, F_SETFL, O_NONBLOCK) == -1) {
+            perror("fcntl client O_NONBLOCK");
+            close(clientFd);
+            continue;
+        }
+
+        // Add client to server
+        server.addClient(clientFd);
+
+        // Set hostname for the client
+        Client* client = server.getClient(clientFd);
+        if (client) {
+            client->setHostname("localhost");
+        }
+
+        // Add to poll vector
+        pollfd clientPollFd;
+        clientPollFd.fd = clientFd;
+        clientPollFd.events = POLLIN;
+        clientPollFd.revents = 0;
+        pollFds.push_back(clientPollFd);
+
+        // Get client IP address
+        char clientIP[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &clientAddr.sin_addr, clientIP, INET_ADDRSTRLEN);
+
+        std::cout << "New client connected: " << clientFd << " (IP: " << clientIP << ")" << std::endl;
+    }
+}
+
+std::string getClientDisplayName(Client* client) {
+    if (client->getNickname().empty()) {
+        return "(unknown)";
+    }
+    return client->getNickname();
+}
+
+void logCommand(int clientFd, const std::string& command, Server& server) {
+    Client* client = server.getClient(clientFd);
+    if (client) {
+        std::cout << "Command from client " << clientFd << " ("
+                  << getClientDisplayName(client) << "): " << command << std::endl;
+    }
+}
+
+void handleClientRead(int clientFd, Server& server, Command& commandProcessor) {
+    Client* client = server.getClient(clientFd);
+    if (!client) {
+        return;
+    }
+
+    char buffer[4096];
+    ssize_t bytesRead = recv(clientFd, buffer, sizeof(buffer) - 1, 0);
+
+    if (bytesRead <= 0) {
+        if (bytesRead == 0) {
+            std::cout << "Client " << clientFd << " (" << getClientDisplayName(client)
+                      << ") disconnected" << std::endl;
+        } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            return;
+        } else {
+            std::cout << "Client " << clientFd << " (" << getClientDisplayName(client)
+                      << ") connection error: " << strerror(errno) << std::endl;
+        }
+
+        // Handle disconnection - send QUIT to channels
+        if (client->isRegistered()) {
+            std::vector<Channel*> clientChannels = server.getClientChannels(client);
+            std::string quitMsg = ":" + client->getHostmask() + " QUIT :Client disconnected\r\n";
+
+            for (std::vector<Channel*>::iterator it = clientChannels.begin();
+                 it != clientChannels.end(); ++it) {
+                (*it)->broadcast(quitMsg, client);
+            }
+        }
+
+        server.removeClient(clientFd);
+        return;
+    }
+
+    buffer[bytesRead] = '\0';
+
+    // Simply append data without complex line ending conversion
+    std::string data(buffer, bytesRead);
+    client->appendToInputBuffer(data);
+
+    // Store registration state before processing
+    bool wasRegistered = client->isRegistered();
+
+    // Process commands using the improved command processor
+    commandProcessor.processClientBuffer(client);
+
+    // Check if client became registered
+    if (!wasRegistered && client->isRegistered()) {
+        std::cout << "Client " << clientFd << " (" << client->getNickname() << ") registered successfully" << std::endl;
+    }
+}
+
+void handleClientWrite(int clientFd, Server& server) {
+    Client* client = server.getClient(clientFd);
+    if (!client) {
+        return;
+    }
+
+    // Flush queued messages to output buffer
+    server.flushClientMessages(clientFd);
+
+    std::string& outputBuffer = client->getOutputBuffer();
+    if (outputBuffer.empty()) {
+        return;
+    }
+
+    ssize_t bytesSent = send(clientFd, outputBuffer.c_str(), outputBuffer.length(), 0);
+
+    if (bytesSent == -1) {
+        if (errno != EAGAIN && errno != EWOULDBLOCK) {
+            perror("send");
+        }
+        return;
+    }
+
+    // Remove sent bytes from buffer
+    outputBuffer.erase(0, bytesSent);
+}
+
+void removeClientFromPoll(int clientFd, std::vector<pollfd>& pollFds) {
+    for (std::vector<pollfd>::iterator it = pollFds.begin(); it != pollFds.end(); ++it) {
+        if (it->fd == clientFd) {
+            pollFds.erase(it);
+            break;
+        }
+    }
+}
+
+void updatePollEvents(std::vector<pollfd>& pollFds, Server& server) {
+    for (size_t i = 1; i < pollFds.size(); ++i) { // Skip server socket at index 0
+        Client* client = server.getClient(pollFds[i].fd);
+        if (client) {
+            pollFds[i].events = POLLIN;
+            // Add POLLOUT if there's data to send
+            if (server.hasClientMessagesToSend(pollFds[i].fd)) {
+                pollFds[i].events |= POLLOUT;
+            }
+        }
+    }
+}
+
+// Prune poll fds that no longer correspond to active clients
+static void pruneStalePollFds(Server& server, std::vector<pollfd>& pollFds) {
+    for (size_t i = 1; i < pollFds.size(); ) {
+        int fd = pollFds[i].fd;
+        if (server.getClient(fd) == NULL) {
+            pollFds.erase(pollFds.begin() + i);
+            continue;
+        }
+        ++i;
+    }
+}
+
+int main(int argc, char* argv[]) {
+    if (argc != 3) {
+        std::cerr << "Usage: " << argv[0] << " <port> <password>" << std::endl;
+        return 1;
+    }
+
+    int port = std::atoi(argv[1]);
+    if (port <= 0 || port > 65535) {
+        std::cerr << "Error: Invalid port number" << std::endl;
+        return 1;
+    }
+
+    std::string password = argv[2];
+    if (password.empty()) {
+        std::cerr << "Error: Password cannot be empty" << std::endl;
+        return 1;
+    }
+
+    // Setup signal handling
+    setupSignalHandling();
+
+    // Create listening socket
+    int serverFd = createListeningSocket(port);
+    if (serverFd == -1) {
+        return 1;
+    }
+
+    // Create server instance
+    Server server;
+    server.setPassword(password);
+    g_server = &server;
+
+    // Create command processor
+    Command commandProcessor(&server);
+    g_commandProcessor = &commandProcessor;
+
+    // Setup poll vector
+    std::vector<pollfd> pollFds;
+    pollfd serverPollFd;
+    serverPollFd.fd = serverFd;
+    serverPollFd.events = POLLIN;
+    serverPollFd.revents = 0;
+    pollFds.push_back(serverPollFd);
+
+    // Variables for timeout handling
+    time_t lastTimeoutCheck = time(NULL);
+    const int TIMEOUT_CHECK_INTERVAL = 60;
+    const int CLIENT_TIMEOUT = 300;
+
+    // Main poll loop
+    while (!g_shutdown) {
+        // Update poll events for clients with data to send
+        updatePollEvents(pollFds, server);
+
+        // Check for idle clients periodically
+        time_t currentTime = time(NULL);
+        if (currentTime - lastTimeoutCheck >= TIMEOUT_CHECK_INTERVAL) {
+            server.disconnectIdleClients(CLIENT_TIMEOUT);
+            pruneStalePollFds(server, pollFds);
+            lastTimeoutCheck = currentTime;
+        }
+
+        // Poll with 1000ms timeout for better responsiveness
+        int pollResult = poll(&pollFds[0], pollFds.size(), 1000);
+
+        if (pollResult == -1) {
+            if (errno == EINTR) {
+                continue;
+            }
+            perror("poll");
+            break;
+        }
+
+        if (pollResult == 0) {
+            continue;
+        }
+
+        // Check server socket for new connections
+        if (pollFds[0].revents & POLLIN) {
+            handleNewConnection(serverFd, server, pollFds);
+        }
+
+        // Check client sockets
+        for (size_t i = 1; i < pollFds.size(); ) {
+            int clientFd = pollFds[i].fd;
+            short revents = pollFds[i].revents;
+
+            // Check for errors or hangup
+            if (revents & (POLLERR | POLLHUP)) {
+                Client* client = server.getClient(clientFd);
+                std::cout << "Client " << clientFd << " (" << getClientDisplayName(client)
+                          << ") error/hangup" << std::endl;
+
+                if (client && client->isRegistered()) {
+                    std::vector<Channel*> clientChannels = server.getClientChannels(client);
+                    std::string quitMsg = ":" + client->getHostmask() + " QUIT :Client disconnected\r\n";
+
+                    for (std::vector<Channel*>::iterator it = clientChannels.begin();
+                         it != clientChannels.end(); ++it) {
+                        (*it)->broadcast(quitMsg, client);
+                    }
+                }
+
+                close(clientFd);
+                server.removeClient(clientFd);
+                removeClientFromPoll(clientFd, pollFds);
+                continue;
+            }
+
+            // Handle read
+            if (revents & POLLIN) {
+                handleClientRead(clientFd, server, commandProcessor);
+
+                // Check if client disconnected during command processing
+                Client* client = server.getClient(clientFd);
+                if (!client) {
+                    close(clientFd);
+                    removeClientFromPoll(clientFd, pollFds);
+                    continue;
+                }
+            }
+
+            // Handle write
+            if (revents & POLLOUT) {
+                handleClientWrite(clientFd, server);
+            }
+
+            ++i;
+        }
+    }
+
+    // Cleanup
+    std::cout << "Shutting down server..." << std::endl;
+    close(serverFd);
+
+    // Close all client connections
+    for (size_t i = 1; i < pollFds.size(); ++i) {
+        int clientFd = pollFds[i].fd;
+        close(clientFd);
+    }
+
+    std::cout << "Server shutdown complete." << std::endl;
+    return 0;
+}
+
+============================================================
+FILE: Makefile
+============================================================
+NAME = ircserv
+
+CXX = g++
+CXXFLAGS = -Wall -Wextra -Werror -std=c++98 -Iincludes
+
+SRCDIR = srcs
+OBJDIR = objs
+INCDIR = includes
+
+SOURCES = main.cpp \
+			$(SRCDIR)/Server.cpp \
+			$(SRCDIR)/Client.cpp \
+			$(SRCDIR)/Channel.cpp \
+      	$(SRCDIR)/Command.cpp \
+			$(SRCDIR)/CommandHandlers.cpp \
+			$(SRCDIR)/IRCProtocol.cpp \
+			$(SRCDIR)/utils.cpp
+
+OBJECTS = $(SOURCES:%.cpp=$(OBJDIR)/%.o)
+
+all: $(NAME)
+
+$(NAME): $(OBJECTS)
+	$(CXX) $(CXXFLAGS) -o $(NAME) $(OBJECTS)
+
+$(OBJDIR)/%.o: %.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+clean:
+	rm -rf $(OBJDIR)
+
+fclean: clean
+	rm -f $(NAME) $(TEST_NAME)
+
+re: fclean all
+
+TEST_NAME = irc_tests
+TEST_SOURCES = $(SRCDIR)/Server.cpp \
+		  $(SRCDIR)/Client.cpp \
+		  $(SRCDIR)/Channel.cpp \
+		  $(SRCDIR)/Command.cpp \
+		  $(SRCDIR)/CommandHandlers.cpp \
+		  $(SRCDIR)/IRCProtocol.cpp \
+		  $(SRCDIR)/utils.cpp \
+		  tests/test_suite.cpp
+
+TEST_OBJECTS = $(TEST_SOURCES:%.cpp=$(OBJDIR)/%.o)
+
+test: $(TEST_OBJECTS)
+	$(CXX) $(CXXFLAGS) -o $(TEST_NAME) $(TEST_OBJECTS)
+	./$(TEST_NAME)
+
+.PHONY: all clean fclean re test
+
+
+============================================================
+FILE: README.md
+============================================================
+# ft_irc

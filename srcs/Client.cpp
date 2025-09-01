@@ -37,13 +37,11 @@ bool Client::welcomeSent() const { return _welcomeSent; }
 void Client::setNickname(const std::string& nick) {
     _nickname = nick;
     _receivedNick = true;
-    // Don't call tryRegister here - let the command handler do it
 }
 
 void Client::setUsername(const std::string& user) {
     _username = user;
     _receivedUser = true;
-    // Don't call tryRegister here - let the command handler do it
 }
 
 void Client::setRealname(const std::string& realname) {
@@ -56,17 +54,14 @@ void Client::setHostname(const std::string& hostname) {
 
 void Client::setReceivedPass(bool received) {
     _receivedPass = received;
-    // Don't call tryRegister here - let the command handler do it
 }
 
 void Client::setReceivedNick(bool received) {
     _receivedNick = received;
-    // Don't call tryRegister here - let the command handler do it
 }
 
 void Client::setReceivedUser(bool received) {
     _receivedUser = received;
-    // Don't call tryRegister here - let the command handler do it
 }
 
 void Client::updateLastActive() {
@@ -77,19 +72,16 @@ void Client::setWelcomeSent(bool v) {
     _welcomeSent = v;
 }
 
-// Check if ready to register, but don't auto-register
 bool Client::canRegister() const {
     return _receivedPass && _receivedNick && _receivedUser && !_registered && !_nickname.empty() && !_username.empty();
 }
 
-// Manual registration - should be called by command handlers
 void Client::tryRegister() {
     if (canRegister()) {
         _registered = true;
     }
 }
 
-// Buffer handling
 void Client::appendToInputBuffer(const std::string& data) {
     _inputBuffer += data;
     updateLastActive();
@@ -103,7 +95,6 @@ std::string& Client::getOutputBuffer() {
     return _outputBuffer;
 }
 
-// Message queue handling
 void Client::enqueueMessage(const std::string& message) {
     _outBufQ.push_back(message);
 }
@@ -113,7 +104,6 @@ bool Client::hasMessagesToSend() const {
 }
 
 void Client::flushMessagesToOutputBuffer() {
-    // Only move one message at a time to avoid overwhelming the output buffer
     if (_outputBuffer.empty() && !_outBufQ.empty()) {
         _outputBuffer = _outBufQ.front();
         _outBufQ.pop_front();
@@ -128,12 +118,10 @@ std::string Client::extractNextLine() {
         return line;
     }
     
-    // Fallback to just \n for compatibility
     pos = _inputBuffer.find("\n");
     if (pos != std::string::npos) {
         std::string line = _inputBuffer.substr(0, pos);
         _inputBuffer.erase(0, pos + 1);
-        // Remove trailing \r if present (C++98 compatible)
         if (!line.empty() && line[line.length() - 1] == '\r') {
             line.erase(line.length() - 1);
         }

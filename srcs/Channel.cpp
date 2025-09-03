@@ -120,3 +120,14 @@ void Channel::removeInvite(Client* client) {
 bool Channel::isInvited(Client* client) const {
     return _invitedClients.find(client) != _invitedClients.end();
 }
+
+
+void Channel::promoteNewOperatorIfNeeded() {
+    if (_operators.empty() && !_members.empty()) {
+        Client* newOperator = *_members.begin(); // Get first member
+        addOperator(newOperator);
+        
+        std::string modeMsg = ":ircserv MODE " + _name + " +o " + newOperator->getNickname() + "\r\n";
+        broadcast(modeMsg, NULL);
+    }
+}

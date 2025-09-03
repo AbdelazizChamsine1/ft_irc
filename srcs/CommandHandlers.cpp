@@ -312,6 +312,8 @@ void CommandHandlers::handlePart(Client* client, const std::vector<std::string>&
     // Remove client from channel
     channel->removeClient(client);
 
+    channel->promoteNewOperatorIfNeeded();
+
     // Delete channel if empty
     _server->deleteChannelIfEmpty(channel);
 }
@@ -329,7 +331,14 @@ void CommandHandlers::handleQuit(Client* client, const std::vector<std::string>&
     }
 
     // Remove client from all channels
+    std::vector<Channel*> channelsToCheck = channelsWithClient;
+    
     _server->removeClientFromAllChannels(client);
+
+    for (std::vector<Channel*>::iterator it = channelsToCheck.begin();
+         it != channelsToCheck.end(); ++it) {
+        (*it)->promoteNewOperatorIfNeeded();
+    }
 }
 
 // Operator commands (simplified implementations)
@@ -386,6 +395,8 @@ void CommandHandlers::handleKick(Client* client, const std::vector<std::string>&
 
     // Remove target from channel
     channel->removeClient(targetClient);
+
+    channel->promoteNewOperatorIfNeeded();
 
     // Delete channel if empty
     _server->deleteChannelIfEmpty(channel);

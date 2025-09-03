@@ -50,6 +50,8 @@ public:
 
     // Timeout handling
     void disconnectIdleClients(int timeoutSeconds);
+    void handleClientDisconnection(int fd);
+
 };
 
 #endif

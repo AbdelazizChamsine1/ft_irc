@@ -64,6 +64,8 @@ public:
     void addInvite(Client* client);
     void removeInvite(Client* client);
     bool isInvited(Client* client) const;
+    void promoteNewOperatorIfNeeded();
+
 };
 
 #endif

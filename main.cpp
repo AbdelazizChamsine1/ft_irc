@@ -160,29 +160,18 @@ void handleClientRead(int clientFd, Server& server, Command& commandProcessor) {
     ssize_t bytesRead = recv(clientFd, buffer, sizeof(buffer) - 1, 0);
 
     if (bytesRead <= 0) {
-        if (bytesRead == 0) {
-            std::cout << "Client " << clientFd << " (" << getClientDisplayName(client)
-                      << ") disconnected" << std::endl;
-        } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            return;
-        } else {
-            std::cout << "Client " << clientFd << " (" << getClientDisplayName(client)
-                      << ") connection error: " << strerror(errno) << std::endl;
-        }
-
-        // Handle disconnection - send QUIT to channels
-        if (client->isRegistered()) {
-            std::vector<Channel*> clientChannels = server.getClientChannels(client);
-            std::string quitMsg = ":" + client->getHostmask() + " QUIT :Client disconnected\r\n";
-
-            for (std::vector<Channel*>::iterator it = clientChannels.begin();
-                 it != clientChannels.end(); ++it) {
-                (*it)->broadcast(quitMsg, client);
-            }
-        }
-
-        server.removeClient(clientFd);
+    if (bytesRead == 0) {
+        std::cout << "Client " << clientFd << " (" << getClientDisplayName(client)
+                  << ") disconnected" << std::endl;
+    } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
         return;
+    } else {
+        std::cout << "Client " << clientFd << " (" << getClientDisplayName(client)
+                  << ") connection error: " << strerror(errno) << std::endl;
+    }
+
+    server.handleClientDisconnection(clientFd);
+    return;
     }
 
     buffer[bytesRead] = '\0';
@@ -355,20 +344,10 @@ int main(int argc, char* argv[]) {
             if (revents & (POLLERR | POLLHUP)) {
                 Client* client = server.getClient(clientFd);
                 std::cout << "Client " << clientFd << " (" << getClientDisplayName(client)
-                          << ") error/hangup" << std::endl;
-
-                if (client && client->isRegistered()) {
-                    std::vector<Channel*> clientChannels = server.getClientChannels(client);
-                    std::string quitMsg = ":" + client->getHostmask() + " QUIT :Client disconnected\r\n";
-
-                    for (std::vector<Channel*>::iterator it = clientChannels.begin();
-                         it != clientChannels.end(); ++it) {
-                        (*it)->broadcast(quitMsg, client);
-                    }
-                }
+                        << ") error/hangup" << std::endl;
 
                 close(clientFd);
-                server.removeClient(clientFd);
+                server.handleClientDisconnection(clientFd);
                 removeClientFromPoll(clientFd, pollFds);
                 continue;
             }

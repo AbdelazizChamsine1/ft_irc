@@ -137,6 +137,33 @@ bool Server::hasClientMessagesToSend(int clientFd) const {
 
 // -------- TIMEOUT HANDLING --------
 
+// void Server::disconnectIdleClients(int timeoutSeconds) {
+//     std::vector<int> clientsToDisconnect;
+//     time_t currentTime = time(NULL);
+
+//     for (std::map<int, Client*>::iterator it = _clients.begin(); it != _clients.end(); ++it) {
+//         if (currentTime - it->second->getLastActive() > timeoutSeconds) {
+//             clientsToDisconnect.push_back(it->first);
+//         }
+//     }
+
+//     for (std::vector<int>::iterator it = clientsToDisconnect.begin(); it != clientsToDisconnect.end(); ++it) {
+//         int fd = *it;
+//         Client* client = getClient(fd);
+//         if (client && client->isRegistered()) {
+//             // Broadcast QUIT to channels to inform peers
+//             std::vector<Channel*> chans = getClientChannels(client);
+//             std::string quitMsg = ":" + client->getHostmask() + " QUIT :Ping timeout" + "\r\n";
+//             for (std::vector<Channel*>::iterator cit = chans.begin(); cit != chans.end(); ++cit) {
+//                 (*cit)->broadcast(quitMsg, client);
+//             }
+//         }
+//         std::cout << "Disconnecting idle client: fd=" << fd << std::endl;
+//         close(fd);
+//         removeClient(fd);
+//     }
+// }
+
 void Server::disconnectIdleClients(int timeoutSeconds) {
     std::vector<int> clientsToDisconnect;
     time_t currentTime = time(NULL);
@@ -149,18 +176,9 @@ void Server::disconnectIdleClients(int timeoutSeconds) {
 
     for (std::vector<int>::iterator it = clientsToDisconnect.begin(); it != clientsToDisconnect.end(); ++it) {
         int fd = *it;
-        Client* client = getClient(fd);
-        if (client && client->isRegistered()) {
-            // Broadcast QUIT to channels to inform peers
-            std::vector<Channel*> chans = getClientChannels(client);
-            std::string quitMsg = ":" + client->getHostmask() + " QUIT :Ping timeout" + "\r\n";
-            for (std::vector<Channel*>::iterator cit = chans.begin(); cit != chans.end(); ++cit) {
-                (*cit)->broadcast(quitMsg, client);
-            }
-        }
         std::cout << "Disconnecting idle client: fd=" << fd << std::endl;
         close(fd);
-        removeClient(fd);
+        handleClientDisconnection(fd);  // Use the new method instead of manual handling
     }
 }
 
@@ -176,4 +194,35 @@ std::vector<Channel*> Server::getClientChannels(Client* client) {
     }
     
     return clientChannels;
+}
+
+void Server::handleClientDisconnection(int fd) {
+    Client* client = getClient(fd);
+    if (!client) {
+        return;
+    }
+
+    // Get channels before removing client
+    std::vector<Channel*> clientChannels = getClientChannels(client);
+    
+    // Send QUIT message to channels if client was registered
+    if (client->isRegistered()) {
+        std::string quitMsg = ":" + client->getHostmask() + " QUIT :Client disconnected\r\n";
+        for (std::vector<Channel*>::iterator it = clientChannels.begin();
+             it != clientChannels.end(); ++it) {
+            (*it)->broadcast(quitMsg, client);
+        }
+    }
+
+    // Remove client from all channels
+    removeClientFromAllChannels(client);
+
+    // Check each channel for operator succession
+    for (std::vector<Channel*>::iterator it = clientChannels.begin();
+         it != clientChannels.end(); ++it) {
+        (*it)->promoteNewOperatorIfNeeded();
+    }
+
+    // Remove the client
+    removeClient(fd);
 }

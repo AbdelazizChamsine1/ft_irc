@@ -60,17 +60,17 @@ void CommandHandlers::handleNick(Client* client, const std::vector<std::string>&
     std::string oldNick = client->getNickname();
     client->setNickname(nickname);
     client->setReceivedNick(true);
-    
+
     // If already registered, send nick change notification to channels
     if (client->isRegistered() && !oldNick.empty()) {
         std::vector<Channel*> channels = _server->getClientChannels(client);
         std::string nickMsg = ":" + oldNick + "!" + client->getUsername() + "@" + client->getHostname() + " NICK :" + nickname + "\r\n";
-        
+
         for (std::vector<Channel*>::iterator it = channels.begin(); it != channels.end(); ++it) {
             (*it)->broadcast(nickMsg, NULL); // Send to all including the client
         }
     }
-    
+
     checkRegistration(client);
     std::cout << "Client " << client->getFd() << " set nickname to " << nickname << std::endl;
 }
@@ -89,7 +89,7 @@ void CommandHandlers::handleUser(Client* client, const std::vector<std::string>&
     client->setUsername(params[0]);
     client->setRealname(params[3]);
     client->setReceivedUser(true);
-    
+
     checkRegistration(client);
     std::cout << "Client " << client->getFd() << " registered with username: " << params[0] << std::endl;
 }
@@ -183,10 +183,10 @@ void CommandHandlers::handleJoin(Client* client, const std::vector<std::string>&
             namesList += (*it)->getNickname();
         }
     }
-    
+
     std::string namesReply = ":" + std::string("ircserv") + " " + IRC::RPL_NAMREPLY + " " + client->getNickname() + " = " + channelName + " :" + namesList + "\r\n";
     _server->queueMessage(client->getFd(), namesReply);
-    
+
     std::string endNamesReply = ":" + std::string("ircserv") + " " + IRC::RPL_ENDOFNAMES + " " + client->getNickname() + " " + channelName + " :End of /NAMES list\r\n";
     _server->queueMessage(client->getFd(), endNamesReply);
 }
@@ -306,7 +306,7 @@ void CommandHandlers::handlePart(Client* client, const std::vector<std::string>&
         partMsg += " :" + partMessage;
     }
     partMsg += "\r\n";
-    
+
     channel->broadcast(partMsg, NULL); // Send to all including sender
 
     // Remove client from channel
@@ -332,7 +332,7 @@ void CommandHandlers::handleQuit(Client* client, const std::vector<std::string>&
 
     // Remove client from all channels
     std::vector<Channel*> channelsToCheck = channelsWithClient;
-    
+
     _server->removeClientFromAllChannels(client);
 
     for (std::vector<Channel*>::iterator it = channelsToCheck.begin();
@@ -676,6 +676,9 @@ void CommandHandlers::handleMode(Client* client, const std::vector<std::string>&
         std::string modeMsg = ":" + client->getHostmask() + " MODE " + target + " " + appliedModes + appliedParams + "\r\n";
         channel->broadcast(modeMsg, NULL);
     }
+
+    // Check if we need to promote a new operator after mode changes
+    channel->promoteNewOperatorIfNeeded();
 }
 
 // Information commands
@@ -683,10 +686,10 @@ void CommandHandlers::handleCap(Client* client, const std::vector<std::string>& 
     if (params.empty()) {
         return;
     }
-    
+
     const std::string& subcommand = params[0];
     std::string nick = client->getNickname().empty() ? "*" : client->getNickname();
-    
+
     if (subcommand == "LS") {
         std::string capReply = ":" + std::string("ircserv") + " CAP " + nick + " LS :\r\n";
         _server->queueMessage(client->getFd(), capReply);
@@ -703,16 +706,16 @@ void CommandHandlers::handleWho(Client* client, const std::vector<std::string>& 
         sendErrorReply(client, IRC::ERR_NOTREGISTERED, "You have not registered");
         return;
     }
-    
+
     std::string target = params.empty() ? "*" : params[0];
     std::string nick = client->getNickname();
-    
+
     if (target.empty() || target == "*") {
         std::string endReply = ":" + std::string("ircserv") + " " + IRC::RPL_ENDOFWHO + " " + nick + " * :End of WHO list\r\n";
         _server->queueMessage(client->getFd(), endReply);
         return;
     }
-    
+
     if (target[0] == '#') {
         Channel* channel = _server->getChannel(target);
         if (channel) {
@@ -721,15 +724,15 @@ void CommandHandlers::handleWho(Client* client, const std::vector<std::string>& 
                 Client* member = *it;
                 std::string flags = "H";
                 if (channel->isOperator(member)) flags += "@";
-                
-                std::string whoReply = ":" + std::string("ircserv") + " " + IRC::RPL_WHOREPLY + " " + nick + " " + target + " " + 
-                                     member->getUsername() + " " + member->getHostname() + " ircserv " + 
+
+                std::string whoReply = ":" + std::string("ircserv") + " " + IRC::RPL_WHOREPLY + " " + nick + " " + target + " " +
+                                     member->getUsername() + " " + member->getHostname() + " ircserv " +
                                      member->getNickname() + " " + flags + " :0 " + member->getRealname() + "\r\n";
                 _server->queueMessage(client->getFd(), whoReply);
             }
         }
     }
-    
+
     std::string endReply = ":" + std::string("ircserv") + " " + IRC::RPL_ENDOFWHO + " " + nick + " " + target + " :End of WHO list\r\n";
     _server->queueMessage(client->getFd(), endReply);
 }
@@ -739,33 +742,33 @@ void CommandHandlers::handleWhois(Client* client, const std::vector<std::string>
         sendErrorReply(client, IRC::ERR_NOTREGISTERED, "You have not registered");
         return;
     }
-    
+
     if (params.empty()) {
         sendErrorReply(client, IRC::ERR_NONICKNAMEGIVEN, "No nickname given");
         return;
     }
-    
+
     const std::string& targetNick = params[0];
     Client* target = _server->findClientByNick(targetNick);
-    
+
     if (!target) {
         sendErrorReply(client, IRC::ERR_NOSUCHNICK, targetNick + " :No such nick/channel");
         std::string endReply = ":" + std::string("ircserv") + " " + IRC::RPL_ENDOFWHOIS + " " + client->getNickname() + " " + targetNick + " :End of WHOIS list\r\n";
         _server->queueMessage(client->getFd(), endReply);
         return;
     }
-    
+
     std::string nick = client->getNickname();
-    
+
     // RPL_WHOISUSER
-    std::string userReply = ":" + std::string("ircserv") + " " + IRC::RPL_WHOISUSER + " " + nick + " " + targetNick + " " + 
+    std::string userReply = ":" + std::string("ircserv") + " " + IRC::RPL_WHOISUSER + " " + nick + " " + targetNick + " " +
                            target->getUsername() + " " + target->getHostname() + " * :" + target->getRealname() + "\r\n";
     _server->queueMessage(client->getFd(), userReply);
-    
+
     // RPL_WHOISSERVER
     std::string serverReply = ":" + std::string("ircserv") + " " + IRC::RPL_WHOISSERVER + " " + nick + " " + targetNick + " ircserv :IRC Server\r\n";
     _server->queueMessage(client->getFd(), serverReply);
-    
+
     // RPL_WHOISCHANNELS
     std::vector<Channel*> channels = _server->getClientChannels(target);
     if (!channels.empty()) {
@@ -778,7 +781,7 @@ void CommandHandlers::handleWhois(Client* client, const std::vector<std::string>
         std::string channelsReply = ":" + std::string("ircserv") + " " + IRC::RPL_WHOISCHANNELS + " " + nick + " " + targetNick + " :" + channelList + "\r\n";
         _server->queueMessage(client->getFd(), channelsReply);
     }
-    
+
     // RPL_ENDOFWHOIS
     std::string endReply = ":" + std::string("ircserv") + " " + IRC::RPL_ENDOFWHOIS + " " + nick + " " + targetNick + " :End of WHOIS list\r\n";
     _server->queueMessage(client->getFd(), endReply);
@@ -789,14 +792,14 @@ void CommandHandlers::handleList(Client* client, const std::vector<std::string>&
         sendErrorReply(client, IRC::ERR_NOTREGISTERED, "You have not registered");
         return;
     }
-    
+
     (void)params; // Unused for now
     std::string nick = client->getNickname();
-    
+
     // RPL_LISTSTART
     std::string startReply = ":" + std::string("ircserv") + " " + IRC::RPL_LISTSTART + " " + nick + " Channel :Users Name\r\n";
     _server->queueMessage(client->getFd(), startReply);
-    
+
     // RPL_LISTEND
     std::string endReply = ":" + std::string("ircserv") + " " + IRC::RPL_LISTEND + " " + nick + " :End of LIST\r\n";
     _server->queueMessage(client->getFd(), endReply);
@@ -807,18 +810,18 @@ void CommandHandlers::handleNames(Client* client, const std::vector<std::string>
         sendErrorReply(client, IRC::ERR_NOTREGISTERED, "You have not registered");
         return;
     }
-    
+
     std::string nick = client->getNickname();
-    
+
     if (params.empty()) {
         std::string endReply = ":" + std::string("ircserv") + " " + IRC::RPL_ENDOFNAMES + " " + nick + " * :End of NAMES list\r\n";
         _server->queueMessage(client->getFd(), endReply);
         return;
     }
-    
+
     const std::string& channelName = params[0];
     Channel* channel = _server->getChannel(channelName);
-    
+
     if (channel) {
         std::string namesList;
         const std::set<Client*>& members = channel->getMembers();
@@ -827,13 +830,13 @@ void CommandHandlers::handleNames(Client* client, const std::vector<std::string>
             if (channel->isOperator(*it)) namesList += "@";
             namesList += (*it)->getNickname();
         }
-        
+
         if (!namesList.empty()) {
             std::string namesReply = ":" + std::string("ircserv") + " " + IRC::RPL_NAMREPLY + " " + nick + " = " + channelName + " :" + namesList + "\r\n";
             _server->queueMessage(client->getFd(), namesReply);
         }
     }
-    
+
     std::string endReply = ":" + std::string("ircserv") + " " + IRC::RPL_ENDOFNAMES + " " + nick + " " + channelName + " :End of NAMES list\r\n";
     _server->queueMessage(client->getFd(), endReply);
 }
@@ -842,19 +845,19 @@ void CommandHandlers::handleNames(Client* client, const std::vector<std::string>
 void CommandHandlers::sendWelcomeSequence(Client* client) {
     std::string nick = client->getNickname();
     std::string hostname = client->getHostname();
-    
+
     std::string welcome = ":" + std::string("ircserv") + " " + IRC::RPL_WELCOME + " " + nick + " :Welcome to the IRC Network " + client->getHostmask() + "\r\n";
     _server->queueMessage(client->getFd(), welcome);
-    
+
     std::string yourhost = ":" + std::string("ircserv") + " " + IRC::RPL_YOURHOST + " " + nick + " :Your host is ircserv, running version 1.0\r\n";
     _server->queueMessage(client->getFd(), yourhost);
-    
+
     std::string created = ":" + std::string("ircserv") + " " + IRC::RPL_CREATED + " " + nick + " :This server was created today\r\n";
     _server->queueMessage(client->getFd(), created);
-    
+
     std::string myinfo = ":" + std::string("ircserv") + " " + IRC::RPL_MYINFO + " " + nick + " ircserv 1.0 o o\r\n";
     _server->queueMessage(client->getFd(), myinfo);
-    
+
     // ISUPPORT
     std::string isupport = ":" + std::string("ircserv") + " 005 " + nick + " CHANTYPES=# PREFIX=(o)@ CASEMAPPING=rfc1459 :are supported by this server\r\n";
     _server->queueMessage(client->getFd(), isupport);

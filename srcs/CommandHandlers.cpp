@@ -667,7 +667,8 @@ void CommandHandlers::handleMode(Client* client, const std::vector<std::string>&
 
             default:
                 sendErrorReply(client, IRC::ERR_UNKNOWNMODE, std::string(1, mode) + " :is unknown mode char to me");
-                return;
+                // Continue processing remaining modes instead of aborting
+                break;
         }
     }
 
